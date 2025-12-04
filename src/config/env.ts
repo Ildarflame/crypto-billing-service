@@ -22,5 +22,11 @@ export const config = {
   binance: {
     baseUrl: process.env.BINANCE_BASE_URL || 'https://api.binance.com',
   },
+  coinbase: {
+    baseUrl: process.env.COINBASE_BASE_URL || 'https://api.exchange.coinbase.com',
+  },
 };
+
+export const COINBASE_BASE_URL =
+  process.env.COINBASE_BASE_URL ?? 'https://api.exchange.coinbase.com';
 

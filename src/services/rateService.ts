@@ -1,5 +1,5 @@
 // src/services/rateService.ts
-import { config } from '../config/env';
+import { COINBASE_BASE_URL } from '../config/env';
 
 export type SupportedCurrency =
   | 'BTC'
@@ -27,74 +27,78 @@ type CachedPrice = {
   fetchedAt: number;
 };
 
-// In-memory cache for Binance prices
+// In-memory cache for Coinbase prices
 const priceCache = new Map<SupportedCurrency, CachedPrice>();
 
 // Cache TTL: 60 seconds
 const CACHE_TTL_MS = 60_000;
 
-// Map supported currencies to Binance ticker symbols
-const CURRENCY_TO_BINANCE_SYMBOL: Record<SupportedCurrency, string> = {
-  BTC: 'BTCUSDT',
-  ETH: 'ETHUSDT',
-  SOL: 'SOLUSDT',
-  MATIC: 'MATICUSDT',
-  DOGE: 'DOGEUSDT',
-  LTC: 'LTCUSDT',
-  DASH: 'DASHUSDT',
-  BNB: 'BNBUSDT',
-  AVAX: 'AVAXUSDT',
-  USDT: 'USDTUSDT', // Not used, but included for completeness
-  USDC: 'USDCUSDT', // Not used, but included for completeness
+// Map supported currencies to Coinbase product IDs
+const CURRENCY_TO_COINBASE_PRODUCT: Record<string, string> = {
+  BTC: 'BTC-USD',
+  ETH: 'ETH-USD',
+  LTC: 'LTC-USD',
+  SOL: 'SOL-USD',
+  MATIC: 'MATIC-USD',
+  DOGE: 'DOGE-USD',
 };
 
 /**
- * Fetches the current price of a cryptocurrency from Binance
+ * Fetches the current price of a cryptocurrency from Coinbase Exchange
  * @param currency - The cryptocurrency to fetch the price for
  * @returns The price of 1 unit of the currency in USD
  */
-async function fetchPriceFromBinance(currency: SupportedCurrency): Promise<number> {
-  const binanceBaseUrl = config.binance?.baseUrl || 'https://api.binance.com';
-  const symbol = CURRENCY_TO_BINANCE_SYMBOL[currency];
+async function getPriceFromCoinbase(currency: SupportedCurrency): Promise<number> {
+  const productId = CURRENCY_TO_COINBASE_PRODUCT[currency];
 
-  if (!symbol) {
-    throw new Error(`Unsupported currency for Binance lookup: ${currency}`);
+  if (!productId) {
+    throw new Error(`Unsupported currency for Coinbase lookup: ${currency}. Supported currencies: BTC, ETH, LTC, SOL, MATIC, DOGE`);
   }
 
-  const url = `${binanceBaseUrl}/api/v3/ticker/price?symbol=${symbol}`;
+  const url = `${COINBASE_BASE_URL}/products/${productId}/ticker`;
 
   try {
     const response = await fetch(url);
 
     if (!response.ok) {
       throw new Error(
-        `Binance API error: ${response.status} ${response.statusText} for symbol ${symbol}`
+        `Coinbase API error: ${response.status} ${response.statusText} for symbol ${currency}`
       );
     }
 
-    const data = await response.json() as { symbol: string; price: string };
+    const data = await response.json() as {
+      trade_id?: number;
+      price: string;
+      size?: string;
+      bid?: string;
+      ask?: string;
+      volume?: string;
+      time?: string;
+    };
 
     if (!data.price) {
-      throw new Error(`Binance response missing price for symbol ${symbol}`);
+      throw new Error(`Coinbase response missing price for symbol ${currency}`);
     }
 
     const price = parseFloat(data.price);
 
     if (isNaN(price) || price <= 0) {
-      throw new Error(`Invalid price from Binance for ${symbol}: ${data.price}`);
+      throw new Error(`Invalid price from Coinbase for ${currency}: ${data.price}`);
     }
 
     return price;
   } catch (error) {
     if (error instanceof Error) {
-      throw new Error(`Failed to fetch price for ${currency} from Binance: ${error.message}`);
+      console.error('[RateService] Failed to fetch price for', currency, 'from Coinbase:', error);
+      throw new Error(`Failed to fetch price for ${currency} from Coinbase: ${error.message}`);
     }
-    throw new Error(`Failed to fetch price for ${currency} from Binance: Unknown error`);
+    console.error('[RateService] Failed to fetch price for', currency, 'from Coinbase: Unknown error');
+    throw new Error(`Failed to fetch price for ${currency} from Coinbase: Unknown error`);
   }
 }
 
 /**
- * Gets the cached price or fetches a new one from Binance
+ * Gets the cached price or fetches a new one from Coinbase
  * @param currency - The cryptocurrency to get the price for
  * @returns The price of 1 unit of the currency in USD
  */
@@ -112,8 +116,8 @@ async function getPriceUsd(currency: SupportedCurrency): Promise<number> {
     return cached.priceUsd;
   }
 
-  // Fetch new price from Binance
-  const priceUsd = await fetchPriceFromBinance(currency);
+  // Fetch new price from Coinbase
+  const priceUsd = await getPriceFromCoinbase(currency);
 
   // Update cache
   priceCache.set(currency, {
