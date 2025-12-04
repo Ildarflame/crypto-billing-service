@@ -34,12 +34,13 @@ const priceCache = new Map<SupportedCurrency, CachedPrice>();
 const CACHE_TTL_MS = 60_000;
 
 // Map supported currencies to Coinbase product IDs
+// Note: MATIC uses POL-USD on Coinbase (Polygon rebranded, but we keep MATIC as public currency code)
 const CURRENCY_TO_COINBASE_PRODUCT: Record<string, string> = {
   BTC: 'BTC-USD',
   ETH: 'ETH-USD',
   LTC: 'LTC-USD',
   SOL: 'SOL-USD',
-  MATIC: 'MATIC-USD',
+  MATIC: 'POL-USD',
   DOGE: 'DOGE-USD',
 };
 
@@ -53,6 +54,11 @@ async function getPriceFromCoinbase(currency: SupportedCurrency): Promise<number
 
   if (!productId) {
     throw new Error(`Unsupported currency for Coinbase lookup: ${currency}. Supported currencies: BTC, ETH, LTC, SOL, MATIC, DOGE`);
+  }
+
+  // Debug log for MATIC (uses POL-USD on Coinbase)
+  if (currency === 'MATIC') {
+    console.log('[RateService] Pricing MATIC using Coinbase product POL-USD');
   }
 
   const url = `${COINBASE_BASE_URL}/products/${productId}/ticker`;
