@@ -1,0 +1,80 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Plan {
+  id                String         @id @default(cuid())
+  code              String         @unique // e.g. 'starter_monthly', 'pro_monthly', 'lifetime'
+  name              String         // human readable name
+  description       String?
+  priceUsd          Float          // price per billing period (in USD equivalent)
+  durationDays      Int?           // 30, 365, or null for lifetime
+  maxRequestsPerDay Int?           // daily rate limit (null = unlimited or not enforced)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  subscriptions     Subscription[]
+  invoices          Invoice[]
+}
+
+model Subscription {
+  id          String    @id @default(cuid())
+  userEmail   String    // user identifier (later can be userId if needed)
+  productCode String    // e.g. 'shadow-intern' (future-proof for multiple products)
+  plan        Plan      @relation(fields: [planId], references: [id])
+  planId      String
+  licenseKey  String?   // license key from Shadow Intern server
+  status      String    // 'pending_payment' | 'active' | 'expired' | 'canceled' | 'payment_received_but_license_failed'
+  startsAt    DateTime?
+  expiresAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  invoices    Invoice[]
+}
+
+model Invoice {
+  id                String    @id @default(cuid())
+  subscription      Subscription @relation(fields: [subscriptionId], references: [id])
+  subscriptionId    String
+  plan              Plan      @relation(fields: [planId], references: [id])
+  planId            String
+  amountUsd         Float
+  keagateInvoiceId String?   // invoice ID on Keagate
+  keagateInvoiceUrl String?  // URL to pay/view invoice on Keagate
+  status            String    // 'pending' | 'paid' | 'expired' | 'canceled'
+  createdAt         DateTime  @default(now())
+  paidAt            DateTime?
+  updatedAt         DateTime  @updatedAt
+  payments          Payment[]
+}
+
+model Payment {
+  id            String   @id @default(cuid())
+  invoice       Invoice  @relation(fields: [invoiceId], references: [id])
+  invoiceId     String
+  txHash        String
+  chain         String   // 'BTC' | 'ETH' | 'BSC' | 'POLYGON' | 'AVALANCHE' | 'SOL' | 'TRON' ...
+  tokenSymbol   String   // 'USDT' | 'USDC' | 'BTC' | 'ETH' | 'BNB' | 'MATIC' | 'AVAX' | 'SOL'
+  amountToken   Float
+  confirmations Int?
+  status        String   // 'pending' | 'confirmed'
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model PaymentMethod {
+  id          String   @id @default(cuid())
+  tokenSymbol String   // 'USDT', 'USDC', 'BTC', 'ETH', 'BNB', 'MATIC', 'AVAX', 'SOL'
+  network     String   // 'TRC20', 'ERC20', 'BEP20', 'POLYGON', 'AVALANCHE', 'BITCOIN', 'SOLANA', 'TRON'
+  isEnabled   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
