@@ -10,6 +10,16 @@ import {
  * TODO: Adjust the endpoint URL and request/response format based on actual Shadow Intern API documentation.
  * This is a placeholder implementation that assumes a REST API structure.
  */
+interface ShadowInternLicenseApiResponse {
+  licenseKey?: string;
+  license_key?: string;
+  key?: string;
+  plan?: string;
+  expiresAt?: string;
+  expires_at?: string;
+  limitPerDay?: number;
+  limit_per_day?: number;
+}
 export async function createOrExtendLicense(
   params: CreateOrExtendLicenseParams
 ): Promise<CreateOrExtendLicenseResponse> {
@@ -51,7 +61,7 @@ export async function createOrExtendLicense(
       throw error;
     }
 
-    const data = await response.json();
+    const data = await response.json() as ShadowInternLicenseApiResponse;
 
     // TODO: Adjust these field names based on actual Shadow Intern response structure
     return {

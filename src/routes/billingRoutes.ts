@@ -73,7 +73,7 @@ router.post('/create-subscription', async (req: Request, res: Response, next) =>
         successUrl,
         cancelUrl,
         customerEmail: userEmail,
-        payCurrency: currency ? currency.toUpperCase() : undefined, // Optional: let user choose if not provided
+        // payCurrency is not passed - customer will choose crypto on invoice page
       });
 
       paymentProvider = 'nowpayments';

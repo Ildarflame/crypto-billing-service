@@ -11,10 +11,10 @@ export interface CreatePaymentArgs {
   payCurrency?: string; // optional
 }
 
-type NowpaymentsCreatePaymentResponse = {
-  payment_id: string;
-  payment_status: string;
+interface NowpaymentsCreateInvoiceResponse {
+  id: number | string; // invoice id
   invoice_url: string;
+  payment_status?: string;
   pay_address?: string;
   price_amount?: number;
   price_currency?: string;
@@ -22,7 +22,7 @@ type NowpaymentsCreatePaymentResponse = {
   pay_currency?: string;
   order_id?: string;
   [key: string]: any; // Allow other fields from NOWPayments response
-};
+}
 
 export interface CreatePaymentResult {
   paymentId: string;
@@ -31,10 +31,11 @@ export interface CreatePaymentResult {
 }
 
 /**
- * Creates a payment on NOWPayments
+ * Creates an invoice on NOWPayments
+ * Uses the "Create invoice" endpoint which allows customers to choose their crypto currency
  */
 export async function createPayment(args: CreatePaymentArgs): Promise<CreatePaymentResult> {
-  const { amountUsd, orderId, successUrl, cancelUrl, customerEmail, payCurrency } = args;
+  const { amountUsd, orderId, successUrl, cancelUrl, customerEmail } = args;
 
   // Validate configuration
   if (!config.nowpayments.apiKey) {
@@ -43,48 +44,39 @@ export async function createPayment(args: CreatePaymentArgs): Promise<CreatePaym
 
   // Build the base URL (remove trailing slash)
   const baseUrl = config.nowpayments.baseUrl.replace(/\/$/, '');
-  const apiUrl = `${baseUrl}/payment`;
 
   // Build IPN callback URL
   const billingBaseUrl = config.billing.publicBaseUrl.replace(/\/$/, '');
   const ipnCallbackUrl = `${billingBaseUrl}/api/webhooks/nowpayments`;
 
-  // Build request body according to NOWPayments API
-  const requestBody: Record<string, any> = {
+  // Build payload according to NOWPayments Invoice API
+  // IMPORTANT: do NOT include pay_currency - let customer choose on invoice page
+  const payload = {
     price_amount: amountUsd,
     price_currency: 'usd',
     order_id: orderId,
     ipn_callback_url: ipnCallbackUrl,
     success_url: successUrl,
     cancel_url: cancelUrl,
+    customer_email: customerEmail || undefined,
+    order_description: `Shadow Intern subscription ${orderId}`,
   };
 
-  // Add optional fields
-  if (payCurrency) {
-    requestBody.pay_currency = payCurrency;
-  }
-
-  if (customerEmail) {
-    requestBody.customer_email = customerEmail;
-  }
-
-  console.log('[NOWPayments] Creating payment:', {
-    amountUsd,
-    orderId,
-    payCurrency: payCurrency || '(customer chooses)',
-    ipnCallbackUrl,
-    successUrl,
-    cancelUrl,
+  console.log('[NOWPayments] Creating invoice', {
+    price_amount: payload.price_amount,
+    price_currency: payload.price_currency,
+    order_id: payload.order_id,
+    ipn_callback_url: payload.ipn_callback_url,
   });
 
   try {
-    const response = await fetch(apiUrl, {
+    const response = await fetch(`${baseUrl}/invoice`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': config.nowpayments.apiKey,
       },
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
@@ -92,35 +84,35 @@ export async function createPayment(args: CreatePaymentArgs): Promise<CreatePaym
       const error = new Error(
         `NOWPayments API error: ${response.status} ${response.statusText} - ${errorText}`
       );
-      console.error('[NOWPayments] Failed to create payment:', error);
+      console.error('[NOWPayments] Failed to create invoice:', error);
       throw error;
     }
 
-    const data = await response.json() as NowpaymentsCreatePaymentResponse;
+    const data = await response.json() as NowpaymentsCreateInvoiceResponse;
 
-    // Extract payment ID and invoice URL
-    const paymentId = data.payment_id;
-    const paymentUrl = data.invoice_url;
+    // Extract invoice ID and invoice URL
+    const invoiceId = String(data.id);
+    const invoiceUrl = data.invoice_url;
 
-    if (!paymentId || !paymentUrl) {
+    if (!invoiceId || !invoiceUrl) {
       throw new Error(
-        `NOWPayments response missing required fields: payment_id=${paymentId}, invoice_url=${paymentUrl}`
+        `NOWPayments response missing required fields: id=${invoiceId}, invoice_url=${invoiceUrl}`
       );
     }
 
-    console.log('[NOWPayments] Payment created successfully:', {
-      paymentId,
-      paymentUrl,
+    console.log('[NOWPayments] Invoice created successfully:', {
+      invoiceId,
+      invoiceUrl,
       paymentStatus: data.payment_status,
     });
 
     return {
-      paymentId,
-      paymentUrl,
+      paymentId: invoiceId,
+      paymentUrl: invoiceUrl,
       raw: data,
     };
   } catch (error) {
-    console.error('[NOWPayments] Error creating payment:', error);
+    console.error('[NOWPayments] Error creating invoice:', error);
     throw error;
   }
 }
