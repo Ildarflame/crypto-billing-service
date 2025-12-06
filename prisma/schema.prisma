@@ -46,8 +46,11 @@ model Invoice {
   plan              Plan      @relation(fields: [planId], references: [id])
   planId            String
   amountUsd         Float
-  keagateInvoiceId String?   // invoice ID on Keagate
-  keagateInvoiceUrl String?  // URL to pay/view invoice on Keagate
+  keagateInvoiceId String?   // @deprecated Keagate integration removed. Kept for backward compatibility with existing data.
+  keagateInvoiceUrl String?  // @deprecated Keagate integration removed. Kept for backward compatibility with existing data.
+  paymentProvider   String?  // payment provider: 'nowpayments' (Keagate support removed)
+  providerPaymentId String?  // payment ID from the payment provider
+  providerInvoiceUrl String? // invoice/payment URL from the payment provider
   status            String    // 'pending' | 'paid' | 'expired' | 'canceled'
   createdAt         DateTime  @default(now())
   paidAt            DateTime?

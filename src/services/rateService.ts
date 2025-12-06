@@ -14,14 +14,6 @@ export type SupportedCurrency =
   | 'USDT'
   | 'USDC';
 
-export type KeagateCurrency =
-  | 'BTC'
-  | 'ETH'
-  | 'SOL'
-  | 'MATIC'
-  | 'DOGE'
-  | 'LTC';
-
 type CachedPrice = {
   priceUsd: number;
   fetchedAt: number;

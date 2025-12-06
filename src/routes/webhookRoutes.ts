@@ -1,136 +1,130 @@
 import { Router, Request, Response } from 'express';
-import { KeagateWebhookPayload } from '../types/api';
-import { getInvoiceByKeagateId, updateInvoice, getInvoiceByIdInternal } from '../models/invoiceService';
+import { NowpaymentsWebhookPayload } from '../types/api';
+import { updateInvoice, getInvoiceByIdInternal, getInvoiceByProviderPaymentId } from '../models/invoiceService';
 import { getSubscriptionById, updateSubscription, computeSubscriptionExpiration } from '../models/subscriptionService';
-import { createPayment } from '../models/paymentService';
 import { createOrExtendLicense } from '../integrations/shadowInternClient';
-import { verifyWebhookSignature } from '../integrations/keagateClient';
+import { verifyWebhookSignature as verifyNowpaymentsWebhookSignature } from '../integrations/nowpaymentsClient';
 import { createError } from '../middlewares/errorHandler';
 
 const router = Router();
 
 /**
- * POST /api/webhooks/keagate
- * Keagate webhook / IPN endpoint
+ * POST /api/webhooks/nowpayments
+ * NOWPayments webhook / IPN endpoint
  * 
  * Note: This route uses express.raw() middleware to preserve the raw body
  * for HMAC signature verification. The body is available as a Buffer.
  */
-router.post('/keagate', async (req: Request, res: Response, next) => {
+router.post('/nowpayments', async (req: Request, res: Response, next) => {
   try {
     // Get raw body as Buffer (from express.raw() middleware)
     const rawBody = req.body as Buffer;
     if (!rawBody || !Buffer.isBuffer(rawBody)) {
-      console.error('[Keagate Webhook] Raw body is not available as Buffer');
+      console.error('[NOWPayments Webhook] Raw body is not available as Buffer');
       return res.status(400).json({ error: 'Invalid request body' });
     }
 
-    // Get signature header
-    const signatureHeader = req.headers['x-keagate-sig'] as string | undefined;
-
     // Verify webhook signature
-    const isValid = verifyWebhookSignature(rawBody, signatureHeader);
+    const isValid = verifyNowpaymentsWebhookSignature(rawBody, req.headers);
     if (!isValid) {
-      console.warn('[Keagate Webhook] Invalid signature, rejecting request');
+      console.warn('[NOWPayments Webhook] Invalid signature, rejecting request');
       return res.status(401).json({ error: 'Invalid signature' });
     }
 
     // Parse JSON payload
-    let payload: KeagateWebhookPayload;
+    let payload: NowpaymentsWebhookPayload;
     try {
       payload = JSON.parse(rawBody.toString('utf8'));
     } catch (parseError) {
-      console.error('[Keagate Webhook] Failed to parse JSON payload:', parseError);
+      console.error('[NOWPayments Webhook] Failed to parse JSON payload:', parseError);
       return res.status(400).json({ error: 'Invalid JSON payload' });
     }
 
-    console.log('[Keagate Webhook] Received IPN:', {
-      event: payload.event,
-      status: payload.status,
-      id: payload.id || payload.invoiceId || payload.paymentId,
-      extraId: payload.extraId,
-      currency: payload.currency,
-      amount: payload.amount,
+    console.log('[NOWPayments Webhook] Received IPN:', {
+      payment_id: payload.payment_id,
+      payment_status: payload.payment_status,
+      order_id: payload.order_id,
+      price_amount: payload.price_amount,
+      price_currency: payload.price_currency,
     });
 
-    // Determine payment status from event or status field
-    const paymentStatus = payload.status || payload.event || '';
-    const isConfirmed = paymentStatus === 'CONFIRMED' || 
-                       paymentStatus === 'PAID' || 
-                       payload.event === 'payment_confirmed';
+    const paymentId = payload.payment_id;
+    const paymentStatus = payload.payment_status;
+    const orderId = payload.order_id; // Our internal invoice ID
 
-    // Only process confirmed/paid payments
-    if (!isConfirmed) {
-      console.log(`[Keagate Webhook] Ignoring non-confirmed status: ${paymentStatus}`);
-      return res.status(200).json({ received: true, message: 'Status not confirmed' });
+    if (!paymentId || !paymentStatus) {
+      console.error('[NOWPayments Webhook] Missing required fields:', payload);
+      return res.status(400).json({ error: 'Missing required fields: payment_id, payment_status' });
     }
 
-    // Extract identifiers
-    const keagatePaymentId = payload.id || payload.invoiceId || payload.paymentId;
-    const extraId = payload.extraId; // Our internal invoice ID
-    const txHash = payload.txHash;
-    const currency = payload.currency;
-    const network = payload.network;
-    const amount = payload.amount;
-
-    if (!currency || !amount) {
-      console.error('[Keagate Webhook] Missing required fields:', payload);
-      return res.status(400).json({ error: 'Missing required fields: currency, amount' });
-    }
-
-    // Find invoice by extraId (preferred) or by Keagate payment ID
+    // Find invoice by order_id (preferred) or by payment_id
     let invoice = null;
-    if (extraId) {
-      invoice = await getInvoiceByIdInternal(extraId);
+    if (orderId) {
+      invoice = await getInvoiceByIdInternal(orderId);
       if (invoice) {
-        console.log(`[Keagate Webhook] Found invoice by extraId: ${extraId}`);
+        console.log(`[NOWPayments Webhook] Found invoice by order_id: ${orderId}`);
       }
     }
 
-    if (!invoice && keagatePaymentId) {
-      invoice = await getInvoiceByKeagateId(keagatePaymentId);
+    if (!invoice && paymentId) {
+      invoice = await getInvoiceByProviderPaymentId(paymentId);
       if (invoice) {
-        console.log(`[Keagate Webhook] Found invoice by Keagate ID: ${keagatePaymentId}`);
+        console.log(`[NOWPayments Webhook] Found invoice by payment_id: ${paymentId}`);
       }
     }
 
     if (!invoice) {
-      console.warn(`[Keagate Webhook] Invoice not found for extraId: ${extraId}, keagateId: ${keagatePaymentId}`);
+      console.warn(`[NOWPayments Webhook] Invoice not found for order_id: ${orderId}, payment_id: ${paymentId}`);
       // Return 200 to avoid webhook retry loops
-      return res.status(200).json({ received: true, message: 'Invoice not found' });
+      return res.status(200).json({ status: 'ok', message: 'Invoice not found' });
     }
+
+    // Determine if payment is successful
+    // 'finished' is the final success status, 'confirmed' is also acceptable
+    const isSuccessful = paymentStatus === 'finished' || paymentStatus === 'confirmed';
+    const isFinalFailure = paymentStatus === 'failed' || paymentStatus === 'expired' || paymentStatus === 'refunded';
 
     // Check if invoice is already paid (idempotency)
-    if (invoice.status === 'paid') {
-      console.log(`[Keagate Webhook] Invoice ${invoice.id} is already paid, skipping (idempotency)`);
-      return res.status(200).json({ received: true, message: 'Already processed' });
+    if (invoice.status === 'paid' && isSuccessful) {
+      console.log(`[NOWPayments Webhook] Invoice ${invoice.id} is already paid, skipping (idempotency)`);
+      return res.status(200).json({ status: 'ok', message: 'Already processed' });
     }
 
-    // Create payment record (only if txHash is provided)
-    if (txHash) {
-      await createPayment({
-        invoiceId: invoice.id,
-        txHash,
-        chain: network || currency, // Use network if available, fallback to currency
-        tokenSymbol: currency,
-        amountToken: amount,
-        status: 'confirmed',
+    // Update invoice status based on payment status
+    if (isSuccessful) {
+      // Update invoice to paid
+      await updateInvoice(invoice.id, {
+        status: 'paid',
+        paidAt: new Date(),
       });
-      console.log(`[Keagate Webhook] Created payment record for invoice ${invoice.id}`);
+      console.log(`[NOWPayments Webhook] Updated invoice ${invoice.id} to paid status`);
+    } else if (isFinalFailure) {
+      // Update invoice to failed/expired
+      await updateInvoice(invoice.id, {
+        status: paymentStatus === 'expired' ? 'expired' : 'canceled',
+      });
+      console.log(`[NOWPayments Webhook] Updated invoice ${invoice.id} to ${paymentStatus} status`);
+      // Return early for failures - no need to process license
+      return res.status(200).json({ status: 'ok', message: 'Payment failed' });
+    } else {
+      // Intermediate status (waiting, confirming, etc.) - just log and return
+      console.log(`[NOWPayments Webhook] Payment ${paymentId} is in intermediate status: ${paymentStatus}`);
+      return res.status(200).json({ status: 'ok', message: `Status: ${paymentStatus}` });
     }
 
-    // Update invoice
-    await updateInvoice(invoice.id, {
-      status: 'paid',
-      paidAt: new Date(),
-    });
-    console.log(`[Keagate Webhook] Updated invoice ${invoice.id} to paid status`);
+    // Only process license creation for successful payments (isSuccessful is true at this point)
 
     // Get subscription with plan
     const subscription = await getSubscriptionById(invoice.subscriptionId);
     if (!subscription) {
-      console.error(`[Keagate Webhook] Subscription not found: ${invoice.subscriptionId}`);
+      console.error(`[NOWPayments Webhook] Subscription not found: ${invoice.subscriptionId}`);
       return res.status(500).json({ error: 'Subscription not found' });
+    }
+
+    // Check if subscription is already active (idempotency)
+    if (subscription.status === 'active' && invoice.status === 'paid') {
+      console.log(`[NOWPayments Webhook] Subscription ${subscription.id} is already active, skipping license creation (idempotency)`);
+      return res.status(200).json({ status: 'ok', message: 'Already processed' });
     }
 
     // Compute new expiration dates
@@ -154,7 +148,7 @@ router.post('/keagate', async (req: Request, res: Response, next) => {
       startsAt: expiration.startsAt,
       expiresAt: expiration.expiresAt,
     });
-    console.log(`[Keagate Webhook] Updated subscription ${subscription.id} to ${subscriptionStatus}`);
+    console.log(`[NOWPayments Webhook] Updated subscription ${subscription.id} to ${subscriptionStatus}`);
 
     // Call Shadow Intern admin API to create/extend license
     try {
@@ -171,9 +165,9 @@ router.post('/keagate', async (req: Request, res: Response, next) => {
         licenseKey: licenseResponse.licenseKey,
       });
 
-      console.log(`[Keagate Webhook] Successfully created/extended license for subscription ${subscription.id}`);
+      console.log(`[NOWPayments Webhook] Successfully created/extended license for subscription ${subscription.id}`);
     } catch (licenseError) {
-      console.error('[Keagate Webhook] Failed to create/extend license:', licenseError);
+      console.error('[NOWPayments Webhook] Failed to create/extend license:', licenseError);
       // Mark subscription with special status
       await updateSubscription(subscription.id, {
         status: 'payment_received_but_license_failed',
@@ -181,9 +175,9 @@ router.post('/keagate', async (req: Request, res: Response, next) => {
       // Still return 200 to acknowledge webhook, but log the error
     }
 
-    res.status(200).json({ received: true, processed: true });
+    res.status(200).json({ status: 'ok' });
   } catch (error) {
-    console.error('[Keagate Webhook] Error processing webhook:', error);
+    console.error('[NOWPayments Webhook] Error processing webhook:', error);
     next(error);
   }
 });

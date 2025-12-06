@@ -2,17 +2,16 @@ import { Router, Request, Response } from 'express';
 import { getPlanByCode } from '../models/planService';
 import { createSubscription } from '../models/subscriptionService';
 import { createInvoice, updateInvoice } from '../models/invoiceService';
-import { createInvoice as createKeagateInvoice } from '../integrations/keagateClient';
+import { createPayment } from '../integrations/nowpaymentsClient';
 import { getInvoiceById } from '../models/invoiceService';
 import { createError } from '../middlewares/errorHandler';
 import { CreateSubscriptionRequest } from '../types/api';
-import type { KeagateCurrency } from '../services/rateService';
 
 const router = Router();
 
 /**
  * POST /api/billing/create-subscription
- * Create a subscription + invoice and forward to Keagate
+ * Create a subscription + invoice and forward to NOWPayments
  */
 router.post('/create-subscription', async (req: Request, res: Response, next) => {
   try {
@@ -30,12 +29,12 @@ router.post('/create-subscription', async (req: Request, res: Response, next) =>
       throw createError('Invalid email format', 400);
     }
 
-    // Validate currency (if provided) or default to BTC
-    const allowedCurrencies: KeagateCurrency[] = ['BTC', 'ETH', 'SOL', 'MATIC', 'DOGE', 'LTC'];
-    const requestedCurrency = (currency ?? 'BTC').toUpperCase() as KeagateCurrency;
-    
-    if (!allowedCurrencies.includes(requestedCurrency)) {
-      throw createError('Currency not supported by Keagate. Allowed values: BTC, ETH, SOL, MATIC, DOGE, LTC', 400);
+    // Validate redirect URLs if provided
+    if (successRedirectUrl && !successRedirectUrl.startsWith('http')) {
+      throw createError('successRedirectUrl must be a valid HTTP(S) URL', 400);
+    }
+    if (cancelRedirectUrl && !cancelRedirectUrl.startsWith('http')) {
+      throw createError('cancelRedirectUrl must be a valid HTTP(S) URL', 400);
     }
 
     // Find the plan
@@ -58,34 +57,39 @@ router.post('/create-subscription', async (req: Request, res: Response, next) =>
       amountUsd: plan.priceUsd,
     });
 
-    // Create invoice on Keagate
-    let keagateInvoiceId: string = '';
-    let keagateInvoiceUrl: string = '';
+    // Create payment on NOWPayments
+    let paymentProvider: string = '';
+    let providerPaymentId: string = '';
+    let providerInvoiceUrl: string = '';
 
     try {
-      const keagateResponse = await createKeagateInvoice({
-        priceUsd: plan.priceUsd,
-        currency: requestedCurrency,
-        metadata: {
-          invoiceId: invoice.id,
-          planCode: plan.code,
-          productCode,
-          userEmail,
-        },
+      // Build redirect URLs (use defaults if not provided)
+      const successUrl = successRedirectUrl || 'https://shadowintern.xyz/billing/success';
+      const cancelUrl = cancelRedirectUrl || 'https://shadowintern.xyz/billing/cancel';
+
+      const nowpaymentsResponse = await createPayment({
+        amountUsd: plan.priceUsd,
+        orderId: invoice.id,
+        successUrl,
+        cancelUrl,
+        customerEmail: userEmail,
+        payCurrency: currency ? currency.toUpperCase() : undefined, // Optional: let user choose if not provided
       });
 
-      keagateInvoiceId = keagateResponse.keagateInvoiceId;
-      keagateInvoiceUrl = keagateResponse.keagateInvoiceUrl || '';
+      paymentProvider = 'nowpayments';
+      providerPaymentId = nowpaymentsResponse.paymentId;
+      providerInvoiceUrl = nowpaymentsResponse.paymentUrl;
 
-      // Update invoice with Keagate info
+      // Update invoice with NOWPayments info
       await updateInvoice(invoice.id, {
-        keagateInvoiceId,
-        keagateInvoiceUrl,
+        paymentProvider,
+        providerPaymentId,
+        providerInvoiceUrl,
       });
-    } catch (keagateError) {
-      console.error('[Billing] Failed to create Keagate invoice:', keagateError);
-      // Still return the invoice, but without Keagate info
-      // The invoice can be updated later when Keagate is available
+    } catch (nowpaymentsError) {
+      console.error('[Billing] Failed to create NOWPayments payment:', nowpaymentsError);
+      // Still return the invoice, but without payment provider info
+      // The invoice can be updated later when NOWPayments is available
     }
 
     // Return response
@@ -98,9 +102,10 @@ router.post('/create-subscription', async (req: Request, res: Response, next) =>
         priceUsd: plan.priceUsd,
         durationDays: plan.durationDays,
       },
-      keagate: {
-        invoiceId: keagateInvoiceId || '',
-        invoiceUrl: keagateInvoiceUrl || '',
+      payment: {
+        provider: paymentProvider || null,
+        paymentId: providerPaymentId || null,
+        paymentUrl: providerInvoiceUrl || null,
       },
     });
   } catch (error) {
@@ -127,9 +132,10 @@ router.get('/invoice/:id', async (req: Request, res: Response, next) => {
       amountUsd: invoice.amountUsd,
       planCode: invoice.plan.code,
       subscriptionId: invoice.subscriptionId,
-      keagate: {
-        invoiceId: invoice.keagateInvoiceId || '',
-        invoiceUrl: invoice.keagateInvoiceUrl || '',
+      payment: {
+        provider: invoice.paymentProvider || null,
+        paymentId: invoice.providerPaymentId || null,
+        paymentUrl: invoice.providerInvoiceUrl || null,
       },
     });
   } catch (error) {

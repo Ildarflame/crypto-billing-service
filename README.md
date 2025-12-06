@@ -1,12 +1,12 @@
 # Crypto Billing Service
 
-A standalone crypto billing service for Shadow Intern that manages pricing plans, subscriptions, invoices, and payments via the Keagate crypto payment gateway.
+A standalone crypto billing service for Shadow Intern that manages pricing plans, subscriptions, invoices, and payments via the NOWPayments crypto payment gateway.
 
 ## Overview
 
 This service acts as a billing middleware between:
 - **Frontend/Landing Pages**: Create subscriptions and retrieve invoice information
-- **Keagate**: External crypto payment gateway that processes crypto payments
+- **NOWPayments**: External crypto payment gateway that processes crypto payments
 - **Shadow Intern Server**: Admin API that manages license keys and rate limits
 
 The Chrome extension only talks to the Shadow Intern server and never calls this service directly.
@@ -42,7 +42,7 @@ crypto-billing-service/
 │   │   ├── webhookRoutes.ts      # /api/webhooks/*
 │   │   └── adminRoutes.ts        # /api/admin/*
 │   ├── integrations/             # External service clients
-│   │   ├── keagateClient.ts      # Keagate payment gateway
+│   │   ├── nowpaymentsClient.ts  # NOWPayments payment gateway
 │   │   └── shadowInternClient.ts # Shadow Intern admin API
 │   ├── middlewares/
 │   │   ├── errorHandler.ts       # Global error handler
@@ -77,9 +77,10 @@ cp .env.example .env
 Required environment variables:
 - `PORT` - Server port (default: 4000)
 - `DATABASE_URL` - SQLite database path (default: `file:./dev.db`)
-- `KEAGATE_BASE_URL` - Keagate instance URL
-- `KEAGATE_API_KEY` - Keagate API key
-- `KEAGATE_WEBHOOK_SECRET` - Keagate webhook secret (for HMAC verification)
+- `NOWPAYMENTS_BASE_URL` - NOWPayments API base URL (default: `https://api.nowpayments.io/v1`)
+- `NOWPAYMENTS_API_KEY` - NOWPayments API key
+- `NOWPAYMENTS_IPN_SECRET` - NOWPayments IPN secret (for HMAC-SHA512 signature verification)
+- `BILLING_PUBLIC_BASE_URL` - Public base URL for webhook callbacks (e.g., `https://billing.shadowintern.xyz`)
 - `SHADOW_INTERN_BASE_URL` - Shadow Intern server API URL
 - `SHADOW_INTERN_ADMIN_TOKEN` - Shadow Intern admin API token
 - `ADMIN_API_TOKEN` - Token for admin endpoints
@@ -146,9 +147,10 @@ Create a new subscription and invoice.
     "priceUsd": 39.99,
     "durationDays": 30
   },
-  "keagate": {
-    "invoiceId": "kg_123",
-    "invoiceUrl": "https://keagate.yourdomain.com/invoice/kg_123"
+  "payment": {
+    "provider": "nowpayments",
+    "paymentId": "12345678",
+    "paymentUrl": "https://nowpayments.io/payment/?iid=12345678"
   }
 }
 ```
@@ -165,36 +167,49 @@ Get invoice details.
   "amountUsd": 39.99,
   "planCode": "pro_monthly",
   "subscriptionId": "sub_...",
-  "keagate": {
-    "invoiceId": "kg_123",
-    "invoiceUrl": "https://..."
+  "payment": {
+    "provider": "nowpayments",
+    "paymentId": "12345678",
+    "paymentUrl": "https://nowpayments.io/payment/?iid=12345678"
   }
 }
 ```
 
 ### Webhooks
 
-#### `POST /api/webhooks/keagate`
+#### `POST /api/webhooks/nowpayments`
 
-Keagate webhook endpoint for payment confirmations.
+NOWPayments IPN (Instant Payment Notification) webhook endpoint for payment confirmations.
+
+**Headers:**
+- `x-nowpayments-sig` - HMAC-SHA512 signature for verification
 
 **Payload:**
 ```json
 {
-  "event": "payment_confirmed",
-  "invoiceId": "kg_123",
-  "txHash": "0x...",
-  "currency": "USDT",
-  "network": "ERC20",
-  "amount": 39.99
+  "payment_id": "12345678",
+  "payment_status": "finished",
+  "order_id": "inv_...",
+  "price_amount": 39.99,
+  "price_currency": "usd",
+  "pay_amount": 0.001234,
+  "pay_currency": "BTC"
 }
 ```
 
-When a payment is confirmed:
-1. Payment record is created
-2. Invoice is marked as paid
-3. Subscription is activated or extended
-4. License key is created/updated on Shadow Intern server
+**Payment Statuses:**
+- `waiting` - Payment is waiting for user action
+- `confirming` - Payment is being confirmed on blockchain
+- `confirmed` - Payment confirmed (treated as success)
+- `finished` - Payment completed successfully (final success status)
+- `failed` - Payment failed
+- `expired` - Payment expired
+- `refunded` - Payment was refunded
+
+When a payment is confirmed (`finished` or `confirmed`):
+1. Invoice is marked as paid
+2. Subscription is activated or extended
+3. License key is created/updated on Shadow Intern server via `POST /admin/license/upsert`
 
 ### Admin API
 
@@ -241,9 +256,12 @@ Supported crypto tokens and networks (reference data).
 
 ## Integration Notes
 
-### Keagate Client
+### NOWPayments Client
 
-The Keagate client (`src/integrations/keagateClient.ts`) includes TODO comments for adjusting the API endpoints and request/response formats based on actual Keagate documentation. The current implementation assumes a REST API structure.
+The NOWPayments client (`src/integrations/nowpaymentsClient.ts`) handles:
+- Payment creation via `POST /v1/payment` API
+- IPN webhook signature verification using HMAC-SHA512
+- Automatic USD to crypto conversion (handled by NOWPayments)
 
 ### Shadow Intern Client
 
@@ -281,11 +299,13 @@ npx prisma studio
 
 ## Production Considerations
 
-1. **Webhook Security**: Implement proper HMAC verification for Keagate webhooks (see TODO in `keagateClient.ts`)
+1. **Webhook Security**: HMAC-SHA512 signature verification is implemented for NOWPayments IPN webhooks
 2. **Error Handling**: License creation failures are logged and subscriptions are marked with `payment_received_but_license_failed` status
 3. **Database**: Consider migrating to Postgres for production (update `DATABASE_URL` in `.env`)
 4. **Background Jobs**: Future enhancement: cron job to mark expired subscriptions
 5. **Logging**: Consider adding structured logging (e.g., Winston, Pino)
+6. **IPN Configuration**: Ensure `NOWPAYMENTS_IPN_SECRET` matches the secret configured in your NOWPayments dashboard
+7. **Webhook URL**: Configure the IPN callback URL in NOWPayments dashboard: `https://billing.shadowintern.xyz/api/webhooks/nowpayments`
 
 ## License
 

@@ -12,6 +12,9 @@ export async function createInvoice(params: {
   amountUsd: number;
   keagateInvoiceId?: string;
   keagateInvoiceUrl?: string;
+  paymentProvider?: string;
+  providerPaymentId?: string;
+  providerInvoiceUrl?: string;
 }): Promise<Invoice> {
   return prisma.invoice.create({
     data: {
@@ -20,6 +23,9 @@ export async function createInvoice(params: {
       amountUsd: params.amountUsd,
       keagateInvoiceId: params.keagateInvoiceId,
       keagateInvoiceUrl: params.keagateInvoiceUrl,
+      paymentProvider: params.paymentProvider,
+      providerPaymentId: params.providerPaymentId,
+      providerInvoiceUrl: params.providerInvoiceUrl,
       status: 'pending',
     },
   });
@@ -37,11 +43,26 @@ export async function getInvoiceById(
   });
 }
 
+/**
+ * @deprecated Keagate integration has been removed. This function is kept for backward compatibility only.
+ */
 export async function getInvoiceByKeagateId(
   keagateInvoiceId: string
 ): Promise<InvoiceWithRelations | null> {
   return prisma.invoice.findFirst({
     where: { keagateInvoiceId },
+    include: {
+      plan: true,
+      subscription: true,
+    },
+  });
+}
+
+export async function getInvoiceByProviderPaymentId(
+  providerPaymentId: string
+): Promise<InvoiceWithRelations | null> {
+  return prisma.invoice.findFirst({
+    where: { providerPaymentId },
     include: {
       plan: true,
       subscription: true,
@@ -68,6 +89,9 @@ export async function updateInvoice(
     paidAt?: Date;
     keagateInvoiceId?: string;
     keagateInvoiceUrl?: string;
+    paymentProvider?: string;
+    providerPaymentId?: string;
+    providerInvoiceUrl?: string;
   }
 ): Promise<Invoice> {
   return prisma.invoice.update({
