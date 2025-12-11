@@ -64,8 +64,19 @@ router.post('/create-subscription', async (req: Request, res: Response, next) =>
 
     try {
       // Build redirect URLs (use defaults if not provided)
-      const successUrl = successRedirectUrl || 'https://shadowintern.xyz/billing/success';
-      const cancelUrl = cancelRedirectUrl || 'https://shadowintern.xyz/billing/cancel';
+      const baseSuccessUrl = successRedirectUrl || 'https://shadowintern.xyz/billing/success';
+      const baseCancelUrl = cancelRedirectUrl || 'https://shadowintern.xyz/billing/cancel';
+
+      // Enrich URLs with subscriptionId and email query parameters
+      const successUrlObj = new URL(baseSuccessUrl);
+      successUrlObj.searchParams.set('subscriptionId', subscription.id);
+      successUrlObj.searchParams.set('email', subscription.userEmail);
+      const successUrl = successUrlObj.toString();
+
+      const cancelUrlObj = new URL(baseCancelUrl);
+      cancelUrlObj.searchParams.set('subscriptionId', subscription.id);
+      cancelUrlObj.searchParams.set('email', subscription.userEmail);
+      const cancelUrl = cancelUrlObj.toString();
 
       const nowpaymentsResponse = await createPayment({
         amountUsd: plan.priceUsd,

@@ -2,6 +2,7 @@ import express, { Express } from 'express';
 import billingRoutes from './routes/billingRoutes';
 import webhookRoutes from './routes/webhookRoutes';
 import adminRoutes from './routes/adminRoutes';
+import publicRoutes from './routes/public';
 import { errorHandler } from './middlewares/errorHandler';
 import { authAdmin } from './middlewares/authAdmin';
 
@@ -21,6 +22,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Routes
+app.use(publicRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/admin', authAdmin, adminRoutes);
 
