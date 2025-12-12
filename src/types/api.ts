@@ -15,7 +15,7 @@ export interface KeagateWebhookPayload {
 }
 
 export interface NowpaymentsWebhookPayload {
-  payment_id: string;
+  payment_id: string | number; // NOWPayments sends this as a number, but we convert to string for DB storage
   payment_status: string; // 'waiting', 'confirming', 'confirmed', 'sending', 'partially_paid', 'finished', 'failed', 'refunded', 'expired'
   order_id?: string; // Our internal invoice ID (we set this when creating payment)
   price_amount: number;

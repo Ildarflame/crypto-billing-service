@@ -48,14 +48,24 @@ router.post('/nowpayments', async (req: Request, res: Response, next) => {
       price_currency: payload.price_currency,
     });
 
-    const paymentId = payload.payment_id;
+    // Convert payment_id to string (NOWPayments sends it as a number, but our DB stores it as string)
+    const paymentIdRaw = payload.payment_id;
+    const providerPaymentId = paymentIdRaw != null ? String(paymentIdRaw) : null;
     const paymentStatus = payload.payment_status;
     const orderId = payload.order_id; // Our internal invoice ID
 
-    if (!paymentId || !paymentStatus) {
+    if (!providerPaymentId || !paymentStatus) {
       console.error('[NOWPayments Webhook] Missing required fields:', payload);
       return res.status(400).json({ error: 'Missing required fields: payment_id, payment_status' });
     }
+
+    // Debug log to verify we're using a string
+    console.log(
+      '[NOWPayments Webhook] Using providerPaymentId for lookup:',
+      providerPaymentId,
+      'type=',
+      typeof providerPaymentId,
+    );
 
     // Find invoice by order_id (preferred) or by payment_id
     let invoice = null;
@@ -66,15 +76,15 @@ router.post('/nowpayments', async (req: Request, res: Response, next) => {
       }
     }
 
-    if (!invoice && paymentId) {
-      invoice = await getInvoiceByProviderPaymentId(paymentId);
+    if (!invoice && providerPaymentId) {
+      invoice = await getInvoiceByProviderPaymentId(providerPaymentId);
       if (invoice) {
-        console.log(`[NOWPayments Webhook] Found invoice by payment_id: ${paymentId}`);
+        console.log(`[NOWPayments Webhook] Found invoice by payment_id: ${providerPaymentId}`);
       }
     }
 
     if (!invoice) {
-      console.warn(`[NOWPayments Webhook] Invoice not found for order_id: ${orderId}, payment_id: ${paymentId}`);
+      console.warn(`[NOWPayments Webhook] Invoice not found for order_id: ${orderId}, payment_id: ${providerPaymentId}`);
       // Return 200 to avoid webhook retry loops
       return res.status(200).json({ status: 'ok', message: 'Invoice not found' });
     }
@@ -108,7 +118,7 @@ router.post('/nowpayments', async (req: Request, res: Response, next) => {
       return res.status(200).json({ status: 'ok', message: 'Payment failed' });
     } else {
       // Intermediate status (waiting, confirming, etc.) - just log and return
-      console.log(`[NOWPayments Webhook] Payment ${paymentId} is in intermediate status: ${paymentStatus}`);
+      console.log(`[NOWPayments Webhook] Payment ${providerPaymentId} is in intermediate status: ${paymentStatus}`);
       return res.status(200).json({ status: 'ok', message: `Status: ${paymentStatus}` });
     }
 
