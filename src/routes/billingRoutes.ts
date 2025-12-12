@@ -6,6 +6,7 @@ import { createPayment } from '../integrations/nowpaymentsClient';
 import { getInvoiceById } from '../models/invoiceService';
 import { createError } from '../middlewares/errorHandler';
 import { CreateSubscriptionRequest } from '../types/api';
+import prisma from '../db/prisma';
 
 const router = Router();
 
@@ -125,6 +126,65 @@ router.post('/create-subscription', async (req: Request, res: Response, next) =>
     });
   } catch (error) {
     next(error);
+  }
+});
+
+/**
+ * GET /api/billing/subscription-status
+ * Get subscription status and licenseKey by subscriptionId and email
+ */
+router.get('/subscription-status', async (req: Request, res: Response) => {
+  try {
+    const subscriptionId = req.query.subscriptionId as string | undefined;
+    const email = req.query.email as string | undefined;
+
+    // Debug log
+    console.log(
+      '[GET /api/billing/subscription-status] subscriptionId:',
+      req.query.subscriptionId,
+      'email:',
+      req.query.email,
+    );
+
+    if (!subscriptionId || !email) {
+      return res.status(400).json({
+        error: 'Missing subscriptionId or email',
+      });
+    }
+
+    // Fetch subscription from DB with plan relation
+    const subscription = await prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+      include: { plan: true },
+    });
+
+    if (!subscription) {
+      return res.status(404).json({
+        error: 'Subscription not found',
+      });
+    }
+
+    // Verify email to avoid leaking data to random callers
+    if (subscription.userEmail.toLowerCase() !== email.toLowerCase()) {
+      return res.status(403).json({
+        error: 'Email does not match subscription',
+      });
+    }
+
+    // Return subscription status with all relevant fields
+    return res.status(200).json({
+      id: subscription.id,
+      status: subscription.status,
+      planCode: subscription.plan.code,
+      licenseKey: subscription.licenseKey ?? null,
+      expiresAt: subscription.expiresAt?.toISOString() ?? null,
+      userEmail: subscription.userEmail,
+    });
+  } catch (err) {
+    console.error('[GET /api/billing/subscription-status] Error:', err);
+    return res.status(500).json({
+      error: 'Internal server error',
+    });
   }
 });
 
