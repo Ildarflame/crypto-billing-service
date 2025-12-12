@@ -68,24 +68,28 @@ router.post('/create-subscription', async (req: Request, res: Response, next) =>
       const baseCancelUrl = cancelRedirectUrl || 'https://shadowintern.xyz/billing/cancel';
 
       // Enrich URLs with subscriptionId and email query parameters
-      const successUrlObj = new URL(baseSuccessUrl);
-      successUrlObj.searchParams.set('subscriptionId', subscription.id);
-      successUrlObj.searchParams.set('email', subscription.userEmail);
-      const successUrl = successUrlObj.toString();
+      const successUrl = new URL(baseSuccessUrl);
+      successUrl.searchParams.set('subscriptionId', subscription.id);
+      successUrl.searchParams.set('email', subscription.userEmail);
 
-      const cancelUrlObj = new URL(baseCancelUrl);
-      cancelUrlObj.searchParams.set('subscriptionId', subscription.id);
-      cancelUrlObj.searchParams.set('email', subscription.userEmail);
-      const cancelUrl = cancelUrlObj.toString();
+      const cancelUrl = new URL(baseCancelUrl);
+      cancelUrl.searchParams.set('subscriptionId', subscription.id);
+      cancelUrl.searchParams.set('email', subscription.userEmail);
 
-      const nowpaymentsResponse = await createPayment({
+      // Build NOWPayments payload
+      const nowPayload = {
         amountUsd: plan.priceUsd,
-        orderId: invoice.id,
-        successUrl,
-        cancelUrl,
+        orderId: subscription.id,
+        successUrl: successUrl.toString(),
+        cancelUrl: cancelUrl.toString(),
         customerEmail: userEmail,
-        // payCurrency is not passed - customer will choose crypto on invoice page
-      });
+      };
+
+      // Debug log to verify URLs being sent to NOWPayments
+      console.log('[billing] NOWPayments success_url:', nowPayload.successUrl);
+      console.log('[billing] NOWPayments cancel_url:', nowPayload.cancelUrl);
+
+      const nowpaymentsResponse = await createPayment(nowPayload);
 
       paymentProvider = 'nowpayments';
       providerPaymentId = nowpaymentsResponse.paymentId;
