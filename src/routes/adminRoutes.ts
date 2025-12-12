@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { getSubscriptions } from '../models/subscriptionService';
 import { createError } from '../middlewares/errorHandler';
 import prisma from '../db/prisma';
+import type { InviteCodeType, InviteCodeStatus } from '../types/invite';
+import { VALID_INVITE_CODE_TYPES, VALID_INVITE_CODE_STATUSES } from '../types/invite';
 
 const router = Router();
 
@@ -122,9 +124,8 @@ router.post('/invite-codes', async (req: Request, res: Response, next) => {
     }
 
     // Validate type if provided
-    const validTypes = ['INVITE', 'REFERRAL', 'PARTNER'];
-    const inviteType = type && validTypes.includes(type.toUpperCase()) 
-      ? type.toUpperCase() 
+    const inviteType: InviteCodeType = type && VALID_INVITE_CODE_TYPES.includes(type.toUpperCase() as InviteCodeType)
+      ? (type.toUpperCase() as InviteCodeType)
       : 'INVITE';
 
     // Parse expiresAt if provided
@@ -198,11 +199,11 @@ router.patch('/invite-codes/:id', async (req: Request, res: Response, next) => {
     const updateData: any = {};
 
     if (status !== undefined) {
-      const validStatuses = ['ACTIVE', 'PAUSED', 'EXPIRED'];
-      if (!validStatuses.includes(status.toUpperCase())) {
+      const upperStatus = status.toUpperCase();
+      if (!VALID_INVITE_CODE_STATUSES.includes(upperStatus as InviteCodeStatus)) {
         throw createError('Invalid status. Must be one of: ACTIVE, PAUSED, EXPIRED', 400);
       }
-      updateData.status = status.toUpperCase();
+      updateData.status = upperStatus as InviteCodeStatus;
     }
 
     if (maxUses !== undefined) {

@@ -83,30 +83,18 @@ model PaymentMethod {
   updatedAt   DateTime @updatedAt
 }
 
-enum InviteCodeType {
-  INVITE
-  REFERRAL
-  PARTNER
-}
-
-enum InviteCodeStatus {
-  ACTIVE
-  PAUSED
-  EXPIRED
-}
-
 model InviteCode {
-  id          String            @id @default(cuid())
-  code        String            @unique
-  type        InviteCodeType    @default(INVITE)
-  status      InviteCodeStatus  @default(ACTIVE)
+  id          String   @id @default(cuid())
+  code        String   @unique
+  type        String   @default("INVITE")   // "INVITE" | "REFERRAL" | "PARTNER"
+  status      String   @default("ACTIVE")   // "ACTIVE" | "PAUSED" | "EXPIRED"
   maxUses     Int?
-  usedCount   Int               @default(0)
+  usedCount   Int      @default(0)
   expiresAt   DateTime?
   ownerEmail  String?
   notes       String?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
   subscriptions Subscription[]
 }
-

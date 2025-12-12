@@ -1,4 +1,5 @@
 import prisma from '../db/prisma';
+import type { InviteCodeStatus } from '../types/invite';
 
 export interface InviteCodeValidationError {
   code: 'NOT_FOUND' | 'NOT_ACTIVE' | 'EXPIRED' | 'LIMIT_REACHED';
@@ -36,7 +37,8 @@ export async function validateInviteCodeOrThrow(
   }
 
   // Check status
-  if (invite.status !== 'ACTIVE') {
+  const activeStatus: InviteCodeStatus = 'ACTIVE';
+  if (invite.status !== activeStatus) {
     throw {
       code: 'NOT_ACTIVE' as const,
       message: 'Invite code is not active',
