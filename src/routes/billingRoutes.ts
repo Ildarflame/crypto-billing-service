@@ -86,8 +86,8 @@ router.post('/create-subscription', async (req: Request, res: Response, next) =>
       };
 
       // Debug log to verify URLs being sent to NOWPayments
-      console.log('[billing] NOWPayments success_url:', nowPayload.successUrl);
-      console.log('[billing] NOWPayments cancel_url:', nowPayload.cancelUrl);
+      console.log('[billing] NOWPayments success_url:', successUrl.toString());
+      console.log('[billing] NOWPayments cancel_url:', cancelUrl.toString());
 
       const nowpaymentsResponse = await createPayment(nowPayload);
 
