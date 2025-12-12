@@ -1,10 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { NowpaymentsWebhookPayload } from '../types/api';
-import { updateInvoice, getInvoiceByIdInternal, getInvoiceByProviderPaymentId } from '../models/invoiceService';
+import { updateInvoice } from '../models/invoiceService';
 import { getSubscriptionById, updateSubscription, computeSubscriptionExpiration } from '../models/subscriptionService';
 import { createOrExtendLicense } from '../integrations/shadowInternClient';
 import { verifyWebhookSignature as verifyNowpaymentsWebhookSignature } from '../integrations/nowpaymentsClient';
 import { createError } from '../middlewares/errorHandler';
+import prisma from '../db/prisma';
 
 const router = Router();
 
@@ -52,41 +53,70 @@ router.post('/nowpayments', async (req: Request, res: Response, next) => {
     const paymentIdRaw = payload.payment_id;
     const providerPaymentId = paymentIdRaw != null ? String(paymentIdRaw) : null;
     const paymentStatus = payload.payment_status;
-    const orderId = payload.order_id; // Our internal invoice ID
+    const orderIdRaw = payload.order_id; // This is actually the subscription ID we sent to NOWPayments
+    const orderId = orderIdRaw != null ? String(orderIdRaw) : null;
 
-    if (!providerPaymentId || !paymentStatus) {
-      console.error('[NOWPayments Webhook] Missing required fields:', payload);
-      return res.status(400).json({ error: 'Missing required fields: payment_id, payment_status' });
+    if (!paymentStatus) {
+      console.error('[NOWPayments Webhook] Missing required field: payment_status', payload);
+      return res.status(400).json({ error: 'Missing required field: payment_status' });
     }
 
-    // Debug log to verify we're using a string
+    if (!orderId) {
+      console.error('[NOWPayments Webhook] Missing required field: order_id', payload);
+      return res.status(400).json({ error: 'Missing required field: order_id' });
+    }
+
+    // Debug log
     console.log(
-      '[NOWPayments Webhook] Using providerPaymentId for lookup:',
+      '[NOWPayments Webhook] Using orderId for lookup:',
+      orderId,
+      'payment_id:',
       providerPaymentId,
-      'type=',
-      typeof providerPaymentId,
     );
 
-    // Find invoice by order_id (preferred) or by payment_id
-    let invoice = null;
-    if (orderId) {
-      invoice = await getInvoiceByIdInternal(orderId);
-      if (invoice) {
-        console.log(`[NOWPayments Webhook] Found invoice by order_id: ${orderId}`);
-      }
-    }
-
-    if (!invoice && providerPaymentId) {
-      invoice = await getInvoiceByProviderPaymentId(providerPaymentId);
-      if (invoice) {
-        console.log(`[NOWPayments Webhook] Found invoice by payment_id: ${providerPaymentId}`);
-      }
-    }
+    // Find invoice by subscriptionId (order_id is the subscription ID we sent to NOWPayments)
+    // Get the most recent pending invoice for this subscription
+    const invoice = await prisma.invoice.findFirst({
+      where: {
+        subscriptionId: orderId,
+      },
+      include: {
+        plan: true,
+        subscription: true,
+      },
+      orderBy: {
+        createdAt: 'desc', // Get the most recent invoice first
+      },
+    });
 
     if (!invoice) {
-      console.warn(`[NOWPayments Webhook] Invoice not found for order_id: ${orderId}, payment_id: ${providerPaymentId}`);
+      console.warn(
+        `[NOWPayments Webhook] Invoice not found for order_id (subscriptionId): ${orderId}, payment_id: ${providerPaymentId}`,
+      );
       // Return 200 to avoid webhook retry loops
       return res.status(200).json({ status: 'ok', message: 'Invoice not found' });
+    }
+
+    console.log(
+      '[NOWPayments Webhook] Found invoice by order_id (subscriptionId):',
+      orderId,
+      'invoiceId:',
+      invoice.id,
+      'subscriptionId:',
+      invoice.subscriptionId,
+    );
+
+    // Update providerPaymentId if it's not set yet (for the first webhook)
+    if (providerPaymentId && !invoice.providerPaymentId) {
+      await prisma.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          providerPaymentId: providerPaymentId,
+        },
+      });
+      console.log(
+        `[NOWPayments Webhook] Updated invoice ${invoice.id} with providerPaymentId: ${providerPaymentId}`,
+      );
     }
 
     // Determine if payment is successful
