@@ -67,6 +67,8 @@ export async function createPayment(args: CreatePaymentArgs): Promise<CreatePaym
     price_currency: payload.price_currency,
     order_id: payload.order_id,
     ipn_callback_url: payload.ipn_callback_url,
+    success_url: payload.success_url,
+    cancel_url: payload.cancel_url,
   });
 
   try {
