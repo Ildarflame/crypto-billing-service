@@ -42,6 +42,7 @@ export interface CreateSubscriptionRequest {
   planCode: string;
   userEmail: string;
   productCode: string;
+  inviteCode: string; // Required invite/referral code
   currency?: 'BTC' | 'ETH' | 'SOL' | 'MATIC' | 'DOGE' | 'LTC'; // defaults to 'BTC' if not provided
   successRedirectUrl?: string;
   cancelRedirectUrl?: string;

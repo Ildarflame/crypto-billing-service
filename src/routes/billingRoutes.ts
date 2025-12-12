@@ -6,6 +6,7 @@ import { createPayment } from '../integrations/nowpaymentsClient';
 import { getInvoiceById } from '../models/invoiceService';
 import { createError } from '../middlewares/errorHandler';
 import { CreateSubscriptionRequest } from '../types/api';
+import { validateInviteCodeOrThrow } from '../services/inviteCodeService';
 import prisma from '../db/prisma';
 
 const router = Router();
@@ -17,11 +18,30 @@ const router = Router();
 router.post('/create-subscription', async (req: Request, res: Response, next) => {
   try {
     const body: CreateSubscriptionRequest = req.body;
-    const { planCode, userEmail, productCode, currency, successRedirectUrl, cancelRedirectUrl } = body;
+    const { planCode, userEmail, productCode, inviteCode, currency, successRedirectUrl, cancelRedirectUrl } = body;
 
     // Validate input
     if (!planCode || !userEmail || !productCode) {
       throw createError('Missing required fields: planCode, userEmail, productCode', 400);
+    }
+
+    // Validate invite code (required)
+    if (!inviteCode || typeof inviteCode !== 'string') {
+      throw createError('Invite / referral code is required', 400);
+    }
+
+    // Validate and get invite code entity
+    let inviteCodeEntity;
+    try {
+      inviteCodeEntity = await validateInviteCodeOrThrow(inviteCode);
+    } catch (validationError: any) {
+      if (validationError.code) {
+        throw createError(
+          validationError.message || 'Invite code is invalid or expired',
+          400
+        );
+      }
+      throw validationError;
     }
 
     // Validate email format (basic check)
@@ -44,11 +64,12 @@ router.post('/create-subscription', async (req: Request, res: Response, next) =>
       throw createError(`Plan not found: ${planCode}`, 404);
     }
 
-    // Create subscription
+    // Create subscription with invite code
     const subscription = await createSubscription({
       userEmail,
       productCode,
       planId: plan.id,
+      inviteCodeId: inviteCodeEntity.id,
     });
 
     // Create invoice

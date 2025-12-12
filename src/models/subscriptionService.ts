@@ -67,12 +67,15 @@ export async function createSubscription(params: {
   userEmail: string;
   productCode: string;
   planId: string;
+  inviteCodeId?: string;
 }): Promise<Subscription> {
   return prisma.subscription.create({
     data: {
       userEmail: params.userEmail,
       productCode: params.productCode,
       planId: params.planId,
+      // @ts-ignore - inviteCodeId will be available after Prisma client generation
+      inviteCodeId: params.inviteCodeId,
       status: 'pending_payment',
     },
   });

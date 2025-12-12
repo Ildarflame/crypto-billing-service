@@ -182,6 +182,9 @@ router.post('/nowpayments', async (req: Request, res: Response, next) => {
       subscriptionStatus = 'active'; // Renewal
     }
 
+    // Track if this is a transition from non-active to active (for invite code increment)
+    const wasNotActive = subscription.status !== 'active';
+
     // Update subscription
     await updateSubscription(subscription.id, {
       status: subscriptionStatus,
@@ -189,6 +192,23 @@ router.post('/nowpayments', async (req: Request, res: Response, next) => {
       expiresAt: expiration.expiresAt,
     });
     console.log(`[NOWPayments Webhook] Updated subscription ${subscription.id} to ${subscriptionStatus}`);
+
+    // Increment invite code usedCount if subscription just became active
+    // @ts-ignore - inviteCodeId will be available after Prisma client generation
+    const inviteCodeId = (subscription as any).inviteCodeId;
+    if (wasNotActive && subscriptionStatus === 'active' && inviteCodeId) {
+      try {
+        // @ts-ignore - Prisma client will be generated after migration
+        await prisma.inviteCode.update({
+          where: { id: inviteCodeId },
+          data: { usedCount: { increment: 1 } },
+        });
+        console.log(`[NOWPayments Webhook] Incremented usedCount for invite code ${inviteCodeId}`);
+      } catch (inviteCodeError) {
+        // Log error but don't fail the webhook processing
+        console.error(`[NOWPayments Webhook] Failed to increment invite code usedCount:`, inviteCodeError);
+      }
+    }
 
     // Call Shadow Intern admin API to create/extend license
     try {

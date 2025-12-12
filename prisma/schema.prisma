@@ -34,6 +34,8 @@ model Subscription {
   status      String    // 'pending_payment' | 'active' | 'expired' | 'canceled' | 'payment_received_but_license_failed'
   startsAt    DateTime?
   expiresAt  DateTime?
+  inviteCodeId String?
+  inviteCode   InviteCode? @relation(fields: [inviteCodeId], references: [id])
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   invoices    Invoice[]
@@ -79,5 +81,32 @@ model PaymentMethod {
   isEnabled   Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+enum InviteCodeType {
+  INVITE
+  REFERRAL
+  PARTNER
+}
+
+enum InviteCodeStatus {
+  ACTIVE
+  PAUSED
+  EXPIRED
+}
+
+model InviteCode {
+  id          String            @id @default(cuid())
+  code        String            @unique
+  type        InviteCodeType    @default(INVITE)
+  status      InviteCodeStatus  @default(ACTIVE)
+  maxUses     Int?
+  usedCount   Int               @default(0)
+  expiresAt   DateTime?
+  ownerEmail  String?
+  notes       String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  subscriptions Subscription[]
 }
 
