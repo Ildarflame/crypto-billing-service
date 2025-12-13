@@ -1,146 +1,182 @@
 # Crypto Billing Service
 
-A standalone crypto billing service for Shadow Intern that manages pricing plans, subscriptions, invoices, and payments via the NOWPayments crypto payment gateway.
+A standalone crypto billing service for Shadow Intern that manages subscriptions, invoices, NOWPayments webhooks, license synchronization, invite codes, and admin operations.
 
-## Overview
+## Description
 
-This service acts as a billing middleware between:
-- **Frontend/Landing Pages**: Create subscriptions and retrieve invoice information
-- **NOWPayments**: External crypto payment gateway that processes crypto payments
-- **Shadow Intern Server**: Admin API that manages license keys and rate limits
+This service handles the complete billing lifecycle for Shadow Intern:
 
-The Chrome extension only talks to the Shadow Intern server and never calls this service directly.
+- **Subscription Management**: Create and manage user subscriptions to pricing plans
+- **Invoice Processing**: Generate invoices and track payment status
+- **NOWPayments Integration**: Process crypto payments via NOWPayments gateway
+- **Webhook Handling**: Receive and process NOWPayments payment notifications (IPN)
+- **License Synchronization**: Automatically sync license keys with Shadow Intern server when payments are confirmed
+- **Invite Code System**: Validate and track invite/referral codes for subscriptions
+- **Admin API**: Manage subscriptions, invoices, invite codes, and view statistics
 
 ## Tech Stack
 
 - **Node.js** + **TypeScript**
 - **Express** - Web framework
 - **Prisma ORM** - Database ORM
-- **SQLite** - Initial database (easy migration path to Postgres)
-- **dotenv** - Configuration management
-- **ESLint** + **Prettier** - Code formatting and linting
+- **SQLite** - Database (easy migration path to Postgres)
+- **pm2** - Process manager for production (recommended)
+- **dotenv** - Environment configuration
+- **NOWPayments API** - Crypto payment gateway integration
+- **Shadow Intern Admin API** - License key management integration
 
-## Project Structure
+## Setup & Local Development
 
-```
-crypto-billing-service/
-├── src/
-│   ├── app.ts                    # Express app setup
-│   ├── server.ts                 # Server entry point
-│   ├── config/
-│   │   └── env.ts                # Environment configuration
-│   ├── db/
-│   │   └── prisma.ts             # Prisma client singleton
-│   ├── models/                   # Business logic services
-│   │   ├── planService.ts
-│   │   ├── subscriptionService.ts
-│   │   ├── invoiceService.ts
-│   │   ├── paymentService.ts
-│   │   └── paymentMethodService.ts
-│   ├── routes/                   # API routes
-│   │   ├── billingRoutes.ts      # /api/billing/*
-│   │   ├── webhookRoutes.ts      # /api/webhooks/*
-│   │   └── adminRoutes.ts        # /api/admin/*
-│   ├── integrations/             # External service clients
-│   │   ├── nowpaymentsClient.ts  # NOWPayments payment gateway
-│   │   └── shadowInternClient.ts # Shadow Intern admin API
-│   ├── middlewares/
-│   │   ├── errorHandler.ts       # Global error handler
-│   │   └── authAdmin.ts          # Admin authentication
-│   └── types/
-│       └── api.ts                 # Shared TypeScript types
-├── prisma/
-│   ├── schema.prisma             # Database schema
-│   └── seed.ts                   # Seed script for initial data
-├── .env.example                  # Environment variables template
-├── package.json
-├── tsconfig.json
-└── README.md
-```
+### Requirements
 
-## Setup
+- **Node.js**: v18+ (or as specified in your project)
+- **npm** or **pnpm**: Package manager
+- **SQLite**: Usually pre-installed on macOS/Linux
 
-### 1. Install Dependencies
+### Installation
 
-```bash
-npm install
-```
+1. **Install dependencies:**
+   ```bash
+   npm install
+   # or
+   pnpm install
+   ```
 
-### 2. Configure Environment Variables
+2. **Set up environment variables:**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
 
-Copy `.env.example` to `.env` and fill in the values:
+3. **Generate Prisma client:**
+   ```bash
+   npm run prisma:generate
+   ```
 
-```bash
-cp .env.example .env
-```
+4. **Run database migrations:**
+   ```bash
+   # For development (creates migration files)
+   npx prisma migrate dev
+   
+   # For production (applies existing migrations)
+   npx prisma migrate deploy
+   ```
 
-Required environment variables:
-- `PORT` - Server port (default: 4000)
-- `DATABASE_URL` - SQLite database path (default: `file:./dev.db`)
-- `NOWPAYMENTS_BASE_URL` - NOWPayments API base URL (default: `https://api.nowpayments.io/v1`)
-- `NOWPAYMENTS_API_KEY` - NOWPayments API key
-- `NOWPAYMENTS_IPN_SECRET` - NOWPayments IPN secret (for HMAC-SHA512 signature verification)
-- `BILLING_PUBLIC_BASE_URL` - Public base URL for webhook callbacks (e.g., `https://billing.shadowintern.xyz`)
-- `SHADOW_INTERN_BASE_URL` - Shadow Intern server API URL
-- `SHADOW_INTERN_ADMIN_TOKEN` - Shadow Intern admin API token
-- `ADMIN_API_TOKEN` - Token for admin endpoints
+5. **Seed initial data (optional):**
+   ```bash
+   npm run prisma:seed
+   ```
 
-### 3. Set Up Database
+### Running the Service
 
-Generate Prisma client:
-```bash
-npm run prisma:generate
-```
-
-Run migrations:
-```bash
-npm run prisma:migrate
-```
-
-Seed initial data (plans and payment methods):
-```bash
-npm run prisma:seed
-```
-
-### 4. Run the Service
-
-Development mode (with hot reload):
+**Development mode** (with hot reload):
 ```bash
 npm run dev
 ```
 
-Production mode:
+**Production mode:**
 ```bash
+# Build TypeScript
 npm run build
+
+# Start server
 npm start
 ```
 
-The service will start on `http://localhost:4000` (or the port specified in `.env`).
+The service will start on `http://localhost:4000` (or the port specified in `PORT` env var).
 
-## API Endpoints
+## Environment Variables
 
-### Billing API
+All environment variables are defined in `src/config/env.ts`. Create a `.env` file in the project root.
+
+### Database
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `DATABASE_URL` | No | SQLite database file path | `file:./prisma/dev.db` |
+
+### Server
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `PORT` | No | Server port | `4000` |
+
+### NOWPayments Integration
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `NOWPAYMENTS_BASE_URL` | No | NOWPayments API base URL | `https://api.nowpayments.io/v1` |
+| `NOWPAYMENTS_API_KEY` | **Yes** | NOWPayments API key for creating invoices | `your-api-key-here` |
+| `NOWPAYMENTS_IPN_SECRET` | **Yes** | Secret for HMAC-SHA512 webhook signature verification | `your-ipn-secret-here` |
+
+### Billing Service
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `BILLING_PUBLIC_BASE_URL` | **Yes** | Public base URL for webhook callbacks (must be accessible by NOWPayments) | `https://billing.shadowintern.xyz` |
+
+### Shadow Intern Integration
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `SHADOW_INTERN_BASE_URL` | **Yes** | Shadow Intern server API base URL | `https://api.shadowintern.xyz` |
+| `SHADOW_INTERN_ADMIN_TOKEN` | **Yes** | Admin token for Shadow Intern API authentication | `your-admin-token-here` |
+
+### Admin API
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `BILLING_ADMIN_TOKEN` | **Yes** | Token for admin endpoint authentication (alternative: `ADMIN_API_TOKEN`) | `your-admin-token-here` |
+| `ADMIN_API_TOKEN` | **Yes** | Alternative name for admin token (used if `BILLING_ADMIN_TOKEN` is not set) | `your-admin-token-here` |
+
+### Exchange APIs (Optional)
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `BINANCE_BASE_URL` | No | Binance API base URL | `https://api.binance.com` |
+| `COINBASE_BASE_URL` | No | Coinbase API base URL | `https://api.exchange.coinbase.com` |
+
+## API Overview
+
+### Health Check
+
+#### `GET /health`
+
+Returns service health status.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-01-15T10:30:00.000Z"
+}
+```
+
+---
+
+### Public Endpoints
 
 #### `POST /api/billing/create-subscription`
 
-Create a new subscription and invoice.
+Create a new subscription and invoice, then forward to NOWPayments.
 
-**Request:**
+**Request Body:**
 ```json
 {
   "planCode": "pro_monthly",
   "userEmail": "user@example.com",
   "productCode": "shadow-intern",
+  "inviteCode": "WELCOME2024",
   "successRedirectUrl": "https://shadowintern.xyz/success",
   "cancelRedirectUrl": "https://shadowintern.xyz/cancel"
 }
 ```
 
-**Response:**
+**Response (201):**
 ```json
 {
-  "subscriptionId": "sub_...",
-  "invoiceId": "inv_...",
+  "subscriptionId": "clx1234567890",
+  "invoiceId": "clx0987654321",
   "plan": {
     "code": "pro_monthly",
     "name": "Pro Monthly",
@@ -155,18 +191,62 @@ Create a new subscription and invoice.
 }
 ```
 
-#### `GET /api/billing/invoice/:id`
+**Notes:**
+- `inviteCode` is **required**
+- `successRedirectUrl` and `cancelRedirectUrl` are optional (defaults provided)
+- Subscription starts with status `pending_payment`
 
-Get invoice details.
+---
 
-**Response:**
+#### `GET /api/billing/subscription-status`
+
+Get subscription status and license key by subscription ID and email.
+
+**Query Parameters:**
+- `subscriptionId` (required) - Subscription ID
+- `email` (required) - User email (must match subscription email)
+
+**Example:**
+```
+GET /api/billing/subscription-status?subscriptionId=clx1234567890&email=user@example.com
+```
+
+**Response (200):**
 ```json
 {
-  "invoiceId": "inv_...",
-  "status": "pending",
+  "id": "clx1234567890",
+  "status": "active",
+  "planCode": "pro_monthly",
+  "licenseKey": "sk-abc123...",
+  "expiresAt": "2024-02-15T10:30:00.000Z",
+  "userEmail": "user@example.com"
+}
+```
+
+**Error Responses:**
+- `400` - Missing subscriptionId or email
+- `403` - Email does not match subscription
+- `404` - Subscription not found
+
+---
+
+#### `GET /api/billing/invoice/:id`
+
+Get invoice details by invoice ID.
+
+**Example:**
+```
+GET /api/billing/invoice/clx0987654321
+```
+
+**Response (200):**
+```json
+{
+  "invoiceId": "clx0987654321",
+  "status": "paid",
   "amountUsd": 39.99,
   "planCode": "pro_monthly",
-  "subscriptionId": "sub_...",
+  "subscriptionId": "clx1234567890",
   "payment": {
     "provider": "nowpayments",
     "paymentId": "12345678",
@@ -175,21 +255,65 @@ Get invoice details.
 }
 ```
 
-### Webhooks
+---
+
+#### `POST /api/invite/validate`
+
+Validate an invite code.
+
+**Request Body:**
+```json
+{
+  "code": "WELCOME2024"
+}
+```
+
+**Response (200) - Valid:**
+```json
+{
+  "ok": true,
+  "code": "welcome2024",
+  "type": "INVITE",
+  "status": "ACTIVE",
+  "maxUses": 100,
+  "usedCount": 5,
+  "expiresAt": "2024-12-31T23:59:59.000Z"
+}
+```
+
+**Response (400) - Invalid:**
+```json
+{
+  "ok": false,
+  "error": "Invite code is invalid or expired",
+  "reason": "NOT_FOUND"
+}
+```
+
+**Error Reasons:**
+- `NOT_FOUND` - Code doesn't exist
+- `NOT_ACTIVE` - Code is not active (status is PAUSED or EXPIRED)
+- `EXPIRED` - Code has passed its expiration date
+- `LIMIT_REACHED` - Code has reached its max uses
+
+---
+
+### Webhook Endpoints
 
 #### `POST /api/webhooks/nowpayments`
 
-NOWPayments IPN (Instant Payment Notification) webhook endpoint for payment confirmations.
+NOWPayments IPN (Instant Payment Notification) webhook endpoint.
 
 **Headers:**
-- `x-nowpayments-sig` - HMAC-SHA512 signature for verification
+- `x-nowpayments-sig` (required) - HMAC-SHA512 signature for verification
+- `Content-Type: application/json`
 
-**Payload:**
+**Request Body:**
 ```json
 {
-  "payment_id": "12345678",
+  "payment_id": 12345678,
   "payment_status": "finished",
-  "order_id": "inv_...",
+  "order_id": "clx1234567890",
   "price_amount": 39.99,
   "price_currency": "usd",
   "pay_amount": 0.001234,
@@ -197,81 +321,649 @@ NOWPayments IPN (Instant Payment Notification) webhook endpoint for payment conf
 }
 ```
 
+**How It Works:**
+
+1. **Signature Verification**: Verifies HMAC-SHA512 signature using `NOWPAYMENTS_IPN_SECRET`
+2. **Invoice Lookup**: Finds invoice by `order_id` (which is the subscription ID)
+3. **Status Processing**:
+   - **Success** (`finished` or `confirmed`):
+     - Marks invoice as `paid`
+     - Activates or extends subscription
+     - Computes new expiration date based on plan duration
+     - Calls Shadow Intern `/admin/license/upsert` to create/extend license
+     - Updates subscription with license key
+     - Increments invite code `usedCount` if subscription just became active
+   - **Failure** (`failed`, `expired`, `refunded`):
+     - Marks invoice as `expired` or `canceled`
+     - No license creation
+   - **Intermediate** (`waiting`, `confirming`):
+     - Logs status and returns 200 (waits for final status)
+
+4. **Idempotency**: Checks if invoice is already paid or subscription is already active to avoid duplicate processing
+
 **Payment Statuses:**
-- `waiting` - Payment is waiting for user action
-- `confirming` - Payment is being confirmed on blockchain
+- `waiting` - Payment waiting for user action
+- `confirming` - Payment being confirmed on blockchain
 - `confirmed` - Payment confirmed (treated as success)
-- `finished` - Payment completed successfully (final success status)
+- `finished` - Payment completed (final success status)
 - `failed` - Payment failed
 - `expired` - Payment expired
 - `refunded` - Payment was refunded
 
-When a payment is confirmed (`finished` or `confirmed`):
-1. Invoice is marked as paid
-2. Subscription is activated or extended
-3. License key is created/updated on Shadow Intern server via `POST /admin/license/upsert`
+**Response (200):**
+```json
+{
+  "status": "ok"
+}
+```
 
-### Admin API
+**Error Responses:**
+- `400` - Invalid request body or missing required fields
+- `401` - Invalid signature
+
+---
+
+### Admin Endpoints
+
+All admin endpoints require authentication via one of:
+- `X-Admin-Token` header
+- `Authorization: Bearer <token>` header
+
+---
+
+#### `GET /api/admin/invite-codes`
+
+Get list of invite codes or a single invite code.
+
+**Query Parameters:**
+- `code` (optional) - Exact match for invite code (returns single code or 404)
+- `ownerEmail` (optional) - Contains search for owner email
+- `type` (optional) - Filter by type: `INVITE`, `REFERRAL`, `PARTNER`
+- `status` (optional) - Filter by status: `ACTIVE`, `PAUSED`, `EXPIRED`
+
+**Example:**
+```
+GET /api/admin/invite-codes?code=WELCOME2024
+```
+
+**Response (200) - Single Code:**
+```json
+{
+  "id": "clx111",
+  "code": "welcome2024",
+  "type": "INVITE",
+  "status": "ACTIVE",
+  "maxUses": 100,
+  "usedCount": 5,
+  "remaining": 95,
+  "ownerEmail": "admin@example.com",
+  "notes": "Welcome campaign 2024",
+  "revenueSharePercent": 0,
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "expiresAt": "2024-12-31T23:59:59.000Z"
+}
+```
+
+**Response (200) - List:**
+```json
+{
+  "inviteCodes": [
+    {
+      "id": "clx111",
+      "code": "welcome2024",
+      "type": "INVITE",
+      "status": "ACTIVE",
+      "maxUses": 100,
+      "usedCount": 5,
+      "remaining": 95,
+      "ownerEmail": "admin@example.com",
+      "notes": "Welcome campaign 2024",
+      "revenueSharePercent": 0,
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "expiresAt": "2024-12-31T23:59:59.000Z"
+    }
+  ]
+}
+```
+
+---
+
+#### `POST /api/admin/invite-codes`
+
+Create a new invite code.
+
+**Request Body:**
+```json
+{
+  "code": "PARTNER2024",
+  "type": "PARTNER",
+  "maxUses": 50,
+  "expiresAt": "2024-12-31T23:59:59.000Z",
+  "ownerEmail": "partner@example.com",
+  "notes": "Partner campaign",
+  "revenueSharePercent": 10
+}
+```
+
+**Response (201):**
+```json
+{
+  "id": "clx222",
+  "code": "partner2024",
+  "type": "PARTNER",
+  "status": "ACTIVE",
+  "maxUses": 50,
+  "usedCount": 0,
+  "remaining": 50,
+  "ownerEmail": "partner@example.com",
+  "notes": "Partner campaign",
+  "revenueSharePercent": 10,
+  "createdAt": "2024-01-15T10:30:00.000Z",
+  "expiresAt": "2024-12-31T23:59:59.000Z"
+}
+```
+
+**Notes:**
+- Code is automatically normalized (trimmed and lowercased)
+- `type` defaults to `INVITE` if not provided
+- `status` defaults to `ACTIVE`
+- `revenueSharePercent` defaults to 0
+
+---
+
+#### `PATCH /api/admin/invite-codes/:id`
+
+Update an invite code.
+
+**Request Body:**
+```json
+{
+  "status": "PAUSED",
+  "maxUses": 200,
+  "notes": "Updated notes",
+  "revenueSharePercent": 15
+}
+```
+
+**Response (200):**
+```json
+{
+  "id": "clx222",
+  "code": "partner2024",
+  "type": "PARTNER",
+  "status": "PAUSED",
+  "maxUses": 200,
+  "usedCount": 0,
+  "remaining": 200,
+  "ownerEmail": "partner@example.com",
+  "notes": "Updated notes",
+  "revenueSharePercent": 15,
+  "createdAt": "2024-01-15T10:30:00.000Z",
+  "expiresAt": "2024-12-31T23:59:59.000Z"
+}
+```
+
+---
 
 #### `GET /api/admin/subscriptions`
 
-Get paginated list of subscriptions (requires `X-Admin-Token` header).
+Get list of subscriptions.
+
+**Query Parameters:**
+- `email` (optional) - Filter by user email (contains search)
+- `status` (optional) - Filter by subscription status
+- `planCode` (optional) - Filter by plan code
+- `inviteCode` (optional) - Filter by invite code string
+- `limit` (optional) - Limit results (default: 50, max: 200)
+
+**Example:**
+```
+GET /api/admin/subscriptions?email=user@example.com&status=active&limit=10
+```
+
+**Response (200):**
+```json
+{
+  "subscriptions": [
+    {
+      "id": "clx1234567890",
+      "userEmail": "user@example.com",
+      "planCode": "pro_monthly",
+      "status": "active",
+      "licenseKey": "sk-abc123...",
+      "startsAt": "2024-01-15T10:30:00.000Z",
+      "expiresAt": "2024-02-15T10:30:00.000Z",
+      "createdAt": "2024-01-15T10:30:00.000Z",
+      "inviteCode": {
+        "id": "clx111",
+        "code": "welcome2024",
+        "type": "INVITE",
+        "ownerEmail": "admin@example.com",
+        "revenueSharePercent": 0
+      }
+    }
+  ]
+}
+```
+
+---
+
+#### `PATCH /api/admin/subscriptions/:id`
+
+Update a subscription.
+
+**Request Body:**
+```json
+{
+  "status": "active",
+  "expiresAt": "2024-12-31T23:59:59.000Z",
+  "addDays": 30,
+  "inviteCode": "NEWCODE2024",
+  "maxRequests": 1000
+}
+```
+
+**Notes:**
+- At least one field must be provided
+- `expiresAt` sets exact expiration date (ISO string)
+- `addDays` extends from current `expiresAt` (or now if null)
+- `inviteCode` can be a code string or `null` to clear
+- `maxRequests` updates the license max requests on Shadow Intern
+
+**Response (200):**
+```json
+{
+  "subscription": {
+    "id": "clx1234567890",
+    "userEmail": "user@example.com",
+    "status": "active",
+    "planCode": "pro_monthly",
+    "licenseKey": "sk-abc123...",
+    "expiresAt": "2024-12-31T23:59:59.000Z",
+    "inviteCode": {
+      "id": "clx333",
+      "code": "newcode2024",
+      "type": "INVITE",
+      "ownerEmail": null,
+      "revenueSharePercent": 0
+    },
+    "createdAt": "2024-01-15T10:30:00.000Z",
+    "updatedAt": "2024-01-15T11:00:00.000Z"
+  }
+}
+```
+
+**License Sync:** This endpoint automatically calls Shadow Intern `/admin/license/update` when subscription is modified.
+
+---
+
+#### `GET /api/admin/invoices`
+
+Get list of invoices.
+
+**Query Parameters:**
+- `email` (optional) - Filter by subscription user email
+- `status` (optional) - Filter by invoice status
+- `providerPaymentId` (optional) - Filter by NOWPayments payment ID
+- `orderId` (optional) - Filter by invoice ID
+- `limit` (optional) - Limit results (default: 50, max: 200)
+
+**Response (200):**
+```json
+{
+  "invoices": [
+    {
+      "id": "clx0987654321",
+      "status": "paid",
+      "priceAmount": 39.99,
+      "priceCurrency": "USD",
+      "createdAt": "2024-01-15T10:30:00.000Z",
+      "providerPaymentId": "12345678",
+      "orderId": "clx0987654321",
+      "subscription": {
+        "id": "clx1234567890",
+        "userEmail": "user@example.com",
+        "planCode": "pro_monthly",
+        "status": "active",
+        "licenseKey": "sk-abc123...",
+        "inviteCode": {
+          "id": "clx111",
+          "code": "welcome2024",
+          "type": "INVITE",
+          "ownerEmail": "admin@example.com",
+          "revenueSharePercent": 0
+        }
+      }
+    }
+  ]
+}
+```
+
+---
+
+#### `GET /api/admin/stats`
+
+Get high-level statistics for admin dashboard.
+
+**Response (200):**
+```json
+{
+  "subscriptions": {
+    "total": 150,
+    "active": 120,
+    "expired": 30
+  },
+  "revenue": {
+    "totalPaidInvoices": 200,
+    "totalRevenueUsd": 7998.00,
+    "revenueLast30DaysUsd": 1999.50
+  },
+  "plans": [
+    {
+      "planCode": "pro_monthly",
+      "name": "Pro Monthly",
+      "priceUsd": 39.99,
+      "totalSubscriptions": 100,
+      "activeSubscriptions": 80,
+      "revenueUsd": 3999.00
+    }
+  ],
+  "inviteCodes": [
+    {
+      "id": "clx111",
+      "code": "welcome2024",
+      "type": "INVITE",
+      "status": "ACTIVE",
+      "maxUses": 100,
+      "usedCount": 50,
+      "subscriptionsCount": 50,
+      "activeSubscriptionsCount": 45,
+      "revenueUsd": 1999.50,
+      "ownerEmail": "admin@example.com",
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "expiresAt": "2024-12-31T23:59:59.000Z"
+    }
+  ]
+}
+```
+
+---
+
+#### `GET /api/admin/user-overview`
+
+Get comprehensive overview for a single user by email.
+
+**Query Parameters:**
+- `email` (required) - User email address
+
+**Example:**
+```
+GET /api/admin/user-overview?email=user@example.com
+```
+
+**Response (200):**
+```json
+{
+  "userEmail": "user@example.com",
+  "metrics": {
+    "totalSubscriptions": 2,
+    "activeSubscriptions": 1,
+    "totalPaidInvoices": 3,
+    "totalRevenueUsd": 119.97,
+    "plansUsed": [
+      {
+        "planCode": "pro_monthly",
+        "count": 2
+      }
+    ]
+  },
+  "subscriptions": [
+    {
+      "id": "clx1234567890",
+      "planCode": "pro_monthly",
+      "planName": "Pro Monthly",
+      "status": "active",
+      "licenseKey": "sk-abc123...",
+      "startsAt": "2024-01-15T10:30:00.000Z",
+      "expiresAt": "2024-02-15T10:30:00.000Z",
+      "createdAt": "2024-01-15T10:30:00.000Z",
+      "inviteCodeId": "clx111",
+      "inviteCode": {
+        "id": "clx111",
+        "code": "welcome2024"
+      }
+    }
+  ],
+  "invoices": [
+    {
+      "id": "clx0987654321",
+      "status": "paid",
+      "amountUsd": 39.99,
+      "createdAt": "2024-01-15T10:30:00.000Z",
+      "paidAt": "2024-01-15T10:35:00.000Z",
+      "subscriptionId": "clx1234567890"
+    }
+  ],
+  "inviteCodes": [
+    {
+      "id": "clx111",
+      "code": "welcome2024",
+      "type": "INVITE",
+      "status": "ACTIVE",
+      "ownerEmail": "admin@example.com"
+    }
+  ]
+}
+```
+
+---
+
+## License Sync Behavior
+
+The service automatically synchronizes license keys with the Shadow Intern server in two scenarios:
+
+### 1. Payment Confirmation (Webhook)
+
+When a NOWPayments webhook confirms payment (`finished` or `confirmed` status):
+
+**Endpoint Called:** `POST {SHADOW_INTERN_BASE_URL}/admin/license/upsert`
+
+**Request Body:**
+```json
+{
+  "userEmail": "user@example.com",
+  "planCode": "pro_monthly",
+  "startsAt": "2024-01-15T10:30:00.000Z",
+  "expiresAt": "2024-02-15T10:30:00.000Z",
+  "maxRequestsPerDay": 1000
+}
+```
 
 **Headers:**
 ```
-X-Admin-Token: your-admin-token
+Authorization: Bearer {SHADOW_INTERN_ADMIN_TOKEN}
+Content-Type: application/json
 ```
 
-**Query Parameters:**
-- `page` - Page number (default: 1)
-- `limit` - Items per page (default: 50, max: 100)
+**Response Handling:**
+- Extracts `licenseKey` from response (supports multiple field name variations)
+- Updates subscription with the license key
+- If license creation fails, subscription status is set to `payment_received_but_license_failed`
 
-## Database Models
+### 2. Admin Subscription Update
 
-### Plan
-Pricing plans with duration and rate limits.
+When an admin updates a subscription via `PATCH /api/admin/subscriptions/:id`:
 
-### Subscription
-User subscriptions to plans. Status can be:
-- `pending_payment` - Waiting for payment
-- `active` - Active subscription
-- `expired` - Subscription expired
-- `canceled` - Canceled by user
-- `payment_received_but_license_failed` - Payment received but license creation failed
+**Endpoint Called:** `POST {SHADOW_INTERN_BASE_URL}/admin/license/update`
 
-### Invoice
-Payment invoices linked to subscriptions.
+**Request Body:**
+```json
+{
+  "subscriptionId": "clx1234567890",
+  "userEmail": "user@example.com",
+  "licenseKey": "sk-abc123...",
+  "status": "active",
+  "expiresAt": "2024-12-31T23:59:59.000Z",
+  "addDays": 30,
+  "maxRequests": 1000
+}
+```
 
-### Payment
-On-chain payment records with transaction details.
+**Headers:**
+```
+X-Admin-Token: {SHADOW_INTERN_ADMIN_TOKEN}
+Content-Type: application/json
+```
 
-### PaymentMethod
-Supported crypto tokens and networks (reference data).
+**Notes:**
+- Only sends fields that were provided in the update request
+- This function is defensive and never throws (errors are logged only)
+- If Shadow Intern is not configured or license key is missing, the update is skipped
 
-## Supported Payment Methods
+**Fields Sent:**
+- `subscriptionId` - Always sent
+- `userEmail` - Always sent
+- `licenseKey` - Required (update skipped if missing)
+- `status` - Only if provided
+- `expiresAt` - Only if provided (ISO string or null)
+- `addDays` - Only if provided
+- `maxRequests` - Only if provided (number or null)
 
-- **USDT**: TRC20, ERC20, BEP20, Polygon, Avalanche
-- **USDC**: ERC20, TRC20, BEP20, Polygon, Avalanche
-- **L1 Coins**: SOL (Solana), BTC (Bitcoin), ETH (Ethereum), BNB (BSC), MATIC (Polygon), AVAX (Avalanche)
+---
 
-## Integration Notes
+## Operational Notes
 
-### NOWPayments Client
+### Running with pm2
 
-The NOWPayments client (`src/integrations/nowpaymentsClient.ts`) handles:
-- Payment creation via `POST /v1/payment` API
-- IPN webhook signature verification using HMAC-SHA512
-- Automatic USD to crypto conversion (handled by NOWPayments)
+**Start service:**
+```bash
+pm2 start dist/server.js --name crypto-billing
+```
 
-### Shadow Intern Client
+**Restart service:**
+```bash
+pm2 restart crypto-billing
+```
 
-The Shadow Intern admin client (`src/integrations/shadowInternClient.ts`) includes TODO comments for adjusting the endpoint URL and request/response format. The current implementation assumes `POST /admin/license/upsert`.
+**Stop service:**
+```bash
+pm2 stop crypto-billing
+```
 
-## Subscription Logic
+**View logs:**
+```bash
+pm2 logs crypto-billing
+```
 
-- **First Payment**: `startsAt = now`, `expiresAt = now + durationDays` (or `null` for lifetime)
-- **Renewal (Active)**: If `expiresAt > now`, extend from current expiration. Otherwise, start from now.
-- **Lifetime Plans**: `durationDays = null`, `expiresAt = null`
+**Save pm2 configuration:**
+```bash
+pm2 save
+pm2 startup  # Follow instructions to enable auto-start on reboot
+```
+
+### Debugging Issues
+
+**Common Error Messages:**
+
+1. **"NOWPayments configuration is missing"**
+   - Check `NOWPAYMENTS_API_KEY` is set in `.env`
+
+2. **"Shadow Intern configuration is missing"**
+   - Check `SHADOW_INTERN_BASE_URL` and `SHADOW_INTERN_ADMIN_TOKEN` are set
+
+3. **"Invalid signature" (webhook)**
+   - Verify `NOWPAYMENTS_IPN_SECRET` matches the secret in NOWPayments dashboard
+   - Ensure webhook URL is correctly configured in NOWPayments
+
+4. **"Invite code is required"**
+   - All subscriptions require an invite code
+   - Create invite codes via `POST /api/admin/invite-codes`
+
+5. **"Subscription not found"**
+   - Check subscription ID is correct
+   - Verify database connection
+
+**Logs:**
+- Service logs to stdout/stderr
+- Check pm2 logs: `pm2 logs crypto-billing`
+- Look for prefixes: `[NOWPayments]`, `[ShadowIntern]`, `[ADMIN]`, `[Billing]`
+
+**Database Inspection:**
+```bash
+# Open Prisma Studio
+npx prisma studio
+
+# Or use SQLite CLI
+sqlite3 prisma/dev.db
+```
+
+### Typical Pitfalls
+
+1. **Migrations Not Applied**
+   - Always run `npx prisma migrate deploy` in production after code updates
+   - Check migration status: `npx prisma migrate status`
+
+2. **InviteCode Table Empty**
+   - Create at least one invite code before users can create subscriptions
+   - Use `POST /api/admin/invite-codes` or seed script
+
+3. **Environment Variable Mismatch**
+   - Ensure `.env` file exists and is in the project root
+   - Verify all required variables are set (check `src/config/env.ts`)
+   - Restart service after changing `.env` (pm2 restart)
+
+4. **Webhook URL Not Accessible**
+   - `BILLING_PUBLIC_BASE_URL` must be publicly accessible
+   - NOWPayments must be able to reach `/api/webhooks/nowpayments`
+   - Check firewall/network settings
+
+5. **License Sync Failures**
+   - Check Shadow Intern server is running and accessible
+   - Verify `SHADOW_INTERN_ADMIN_TOKEN` is correct
+   - Check Shadow Intern logs for API errors
+   - Subscriptions with `payment_received_but_license_failed` status need manual intervention
+
+6. **Database Locked (SQLite)**
+   - SQLite can have locking issues under high concurrency
+   - Consider migrating to Postgres for production
+   - Check for long-running transactions
+
+### Database Migrations
+
+**Development:**
+```bash
+# Create and apply migration
+npx prisma migrate dev --name migration_name
+```
+
+**Production:**
+```bash
+# Apply existing migrations (does not create new ones)
+npx prisma migrate deploy
+```
+
+**Reset Database (⚠️ DESTRUCTIVE):**
+```bash
+# Development only - deletes all data
+npx prisma migrate reset
+```
+
+---
+
+## Database Schema
+
+Key models:
+
+- **Plan**: Pricing plans with duration and rate limits
+- **Subscription**: User subscriptions (status: `pending_payment`, `active`, `expired`, `canceled`, `payment_received_but_license_failed`)
+- **Invoice**: Payment invoices linked to subscriptions
+- **Payment**: On-chain payment records (transaction hashes, confirmations)
+- **PaymentMethod**: Supported crypto tokens and networks
+- **InviteCode**: Invite/referral codes with usage tracking
+
+See `prisma/schema.prisma` for full schema definition.
+
+---
 
 ## Development
 
@@ -285,29 +977,15 @@ npm run lint
 npm run format
 ```
 
-### Database Migrations
-
-Create a new migration:
-```bash
-npm run prisma:migrate
-```
-
-View database in Prisma Studio:
+### Prisma Studio
 ```bash
 npx prisma studio
 ```
 
-## Production Considerations
+Opens a GUI to browse and edit database records.
 
-1. **Webhook Security**: HMAC-SHA512 signature verification is implemented for NOWPayments IPN webhooks
-2. **Error Handling**: License creation failures are logged and subscriptions are marked with `payment_received_but_license_failed` status
-3. **Database**: Consider migrating to Postgres for production (update `DATABASE_URL` in `.env`)
-4. **Background Jobs**: Future enhancement: cron job to mark expired subscriptions
-5. **Logging**: Consider adding structured logging (e.g., Winston, Pino)
-6. **IPN Configuration**: Ensure `NOWPAYMENTS_IPN_SECRET` matches the secret configured in your NOWPayments dashboard
-7. **Webhook URL**: Configure the IPN callback URL in NOWPayments dashboard: `https://billing.shadowintern.xyz/api/webhooks/nowpayments`
+---
 
 ## License
 
 ISC
-
