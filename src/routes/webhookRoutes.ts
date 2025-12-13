@@ -201,11 +201,9 @@ router.post('/nowpayments', async (req: Request, res: Response, next) => {
     console.log(`[NOWPayments Webhook] Updated subscription ${subscription.id} to ${subscriptionStatus}`);
 
     // Increment invite code usedCount if subscription just became active
-    // @ts-expect-error - inviteCodeId will be available after Prisma client generation
-    const inviteCodeId = (subscription as any).inviteCodeId;
+    const inviteCodeId = subscription.inviteCodeId;
     if (wasNotActive && subscriptionStatus === 'active' && inviteCodeId) {
       try {
-        // @ts-expect-error - Prisma client will be generated after migration
         await prisma.inviteCode.update({
           where: { id: inviteCodeId },
           data: { usedCount: { increment: 1 } },

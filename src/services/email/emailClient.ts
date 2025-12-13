@@ -75,7 +75,7 @@ async function sendEmailViaResend(params: SendEmailParams): Promise<void> {
       throw new Error(`Resend API error: ${response.status} ${response.statusText} - ${errorText}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as { id?: string };
     console.log('[Email] Resend response:', { id: data.id });
   } catch (error: any) {
     clearTimeout(timeoutId);

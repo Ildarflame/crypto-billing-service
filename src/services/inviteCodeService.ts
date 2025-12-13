@@ -24,7 +24,6 @@ export async function validateInviteCodeOrThrow(
   }
 
   // Look up by code
-  // @ts-expect-error - Prisma client will be generated after migration
   const invite = await prisma.inviteCode.findUnique({
     where: { code: normalized },
   });

@@ -44,11 +44,19 @@ export function generateReceiptPdf(data: ReceiptEmailData): Promise<Buffer> {
       if (licenseKey) {
         doc.fontSize(14).text('License Key:', { underline: true });
         doc.moveDown(0.5);
-        doc.fontSize(18).font('Courier').text(licenseKey, {
+        // Draw background rectangle
+        doc.fontSize(18).font('Courier');
+        const textWidth = doc.widthOfString(licenseKey);
+        const textHeight = 18;
+        const padding = 10;
+        const rectX = (doc.page.width - textWidth - padding * 2) / 2;
+        const rectY = doc.y;
+        doc.rect(rectX, rectY, textWidth + padding * 2, textHeight + padding * 2)
+          .fillColor('#f0f0f0')
+          .fill();
+        // Draw text on top
+        doc.fillColor('#000000').text(licenseKey, {
           align: 'center',
-          fill: true,
-          backgroundColor: '#f0f0f0',
-          padding: 10,
         });
         doc.font('Helvetica').fontSize(10);
         doc.moveDown(1);

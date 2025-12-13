@@ -74,7 +74,6 @@ export async function createSubscription(params: {
       userEmail: params.userEmail,
       productCode: params.productCode,
       planId: params.planId,
-      // @ts-expect-error - inviteCodeId will be available after Prisma client generation
       inviteCodeId: params.inviteCodeId,
       status: 'pending_payment',
     },
