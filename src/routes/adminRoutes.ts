@@ -3,6 +3,7 @@ import { createError } from '../middlewares/errorHandler';
 import prisma from '../db/prisma';
 import type { InviteCodeType, InviteCodeStatus } from '../types/invite';
 import { VALID_INVITE_CODE_TYPES, VALID_INVITE_CODE_STATUSES } from '../types/invite';
+import { updateLicenseFromSubscription } from '../integrations/shadowInternClient';
 
 const router = Router();
 
@@ -439,7 +440,7 @@ router.get('/subscriptions', async (req: Request, res: Response, next) => {
 router.patch('/subscriptions/:id', async (req: Request, res: Response, next) => {
   try {
     const { id } = req.params;
-    const { status, expiresAt, addDays, inviteCode } = req.body;
+    const { status, expiresAt, addDays, inviteCode, maxRequests } = req.body;
 
     console.log('[ADMIN Subscriptions] PATCH /subscriptions/:id', {
       id,
@@ -518,6 +519,22 @@ router.patch('/subscriptions/:id', async (req: Request, res: Response, next) => 
         inviteCode: true,
       },
     });
+
+    // Update Shadow Intern license if subscription was modified
+    try {
+      await updateLicenseFromSubscription({
+        subscriptionId: updated.id,
+        userEmail: updated.userEmail,
+        licenseKey: updated.licenseKey,
+        status: status !== undefined ? status : undefined,
+        expiresAt: data.expiresAt !== undefined ? (data.expiresAt as Date | null) : undefined,
+        addDays: addDays !== undefined ? addDays : undefined,
+        maxRequests: maxRequests !== undefined ? (maxRequests !== null ? Number(maxRequests) : null) : undefined,
+      });
+    } catch (shadowInternError) {
+      // Log error but don't fail the request - admin UI should still see 200
+      console.error('[ShadowIntern] License update failed in admin PATCH handler:', shadowInternError);
+    }
 
     // Return normalized response
     return res.json({

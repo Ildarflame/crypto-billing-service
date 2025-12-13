@@ -77,3 +77,112 @@ export async function createOrExtendLicense(
   }
 }
 
+/**
+ * Updates a license on the Shadow Intern server when an admin modifies a subscription.
+ * This function is defensive and never throws - it only logs errors to avoid breaking the billing flow.
+ */
+export async function updateLicenseFromSubscription(params: {
+  subscriptionId: string;
+  userEmail: string;
+  licenseKey?: string | null;
+  status?: string;
+  expiresAt?: Date | null;
+  addDays?: number;
+  maxRequests?: number | null;
+}): Promise<void> {
+  const { subscriptionId, userEmail, licenseKey, status, expiresAt, addDays, maxRequests } = params;
+
+  console.log('[ShadowIntern] updateLicenseFromSubscription called', {
+    subscriptionId,
+    userEmail: userEmail ? '***' : undefined,
+    hasLicenseKey: !!licenseKey,
+    status,
+    expiresAt: expiresAt ? expiresAt.toISOString() : undefined,
+    addDays,
+    maxRequests,
+  });
+
+  // If Shadow Intern is not configured, log and return
+  if (!config.shadowIntern.baseUrl || !config.shadowIntern.adminToken) {
+    console.log('[ShadowIntern] License update skipped: Shadow Intern configuration is missing (baseUrl or adminToken)');
+    return;
+  }
+
+  // If no licenseKey is provided, log and return
+  if (!licenseKey) {
+    console.log('[ShadowIntern] License update skipped: No licenseKey provided for subscription', subscriptionId);
+    return;
+  }
+
+  try {
+    // Build request body with only provided fields (exclude undefined)
+    const body: any = {
+      subscriptionId,
+      userEmail,
+      licenseKey,
+    };
+
+    if (status !== undefined) {
+      body.status = status;
+    }
+
+    if (expiresAt !== undefined) {
+      body.expiresAt = expiresAt ? expiresAt.toISOString() : null;
+    }
+
+    if (addDays !== undefined) {
+      body.addDays = addDays;
+    }
+
+    if (maxRequests !== undefined) {
+      body.maxRequests = maxRequests;
+    }
+
+    const url = `${config.shadowIntern.baseUrl}/admin/license/update`;
+    console.log('[ShadowIntern] Sending license update request', {
+      url,
+      subscriptionId,
+      status,
+      hasExpiresAt: !!expiresAt,
+      addDays,
+      maxRequests,
+    });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Token': config.shadowIntern.adminToken,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[ShadowIntern] License update failed', {
+        subscriptionId,
+        statusCode: response.status,
+        statusText: response.statusText,
+        responseBody: errorText,
+        licenseKey: licenseKey ? '***' : undefined,
+      });
+      return;
+    }
+
+    const responseData = await response.json();
+    console.log('[ShadowIntern] License update succeeded', {
+      subscriptionId,
+      statusCode: response.status,
+      licenseKey: licenseKey ? '***' : undefined,
+      responseData: responseData ? 'received' : 'empty',
+    });
+  } catch (error) {
+    console.error('[ShadowIntern] License update error', {
+      subscriptionId,
+      error: error instanceof Error ? error.message : String(error),
+      licenseKey: licenseKey ? '***' : undefined,
+    });
+    // Never throw - we don't want to break the billing flow
+  }
+}
+
