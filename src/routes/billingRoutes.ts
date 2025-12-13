@@ -7,6 +7,7 @@ import { getInvoiceById } from '../models/invoiceService';
 import { createError } from '../middlewares/errorHandler';
 import { CreateSubscriptionRequest } from '../types/api';
 import { validateInviteCodeOrThrow } from '../services/inviteCodeService';
+import type { ReceiptEmailData } from '../services/email/templates/receipt';
 import prisma from '../db/prisma';
 
 const router = Router();
@@ -18,7 +19,7 @@ const router = Router();
 router.post('/create-subscription', async (req: Request, res: Response, next) => {
   try {
     const body: CreateSubscriptionRequest = req.body;
-    const { planCode, userEmail, productCode, inviteCode, currency, successRedirectUrl, cancelRedirectUrl } = body;
+    const { planCode, userEmail, productCode, inviteCode, successRedirectUrl, cancelRedirectUrl } = body;
 
     // Validate input
     if (!planCode || !userEmail || !productCode) {
@@ -236,6 +237,88 @@ router.get('/invoice/:id', async (req: Request, res: Response, next) => {
     });
   } catch (error) {
     next(error);
+  }
+});
+
+/**
+ * GET /api/billing/receipt/:invoiceId?token=...
+ * Download receipt PDF (requires signed token)
+ */
+router.get('/receipt/:invoiceId', async (req: Request, res: Response, next) => {
+  try {
+    const { invoiceId } = req.params;
+    const token = req.query.token as string | undefined;
+
+    if (!token) {
+      throw createError('Missing token parameter', 401);
+    }
+
+    // Verify token
+    const { verifyReceiptToken } = await import('../utils/receiptToken');
+    let payload;
+    try {
+      payload = verifyReceiptToken(token);
+    } catch (error: any) {
+      console.warn('[Receipt Download] Invalid token:', error.message);
+      throw createError('Invalid or expired token', 401);
+    }
+
+    // Verify invoiceId matches
+    if (payload.invoiceId !== invoiceId) {
+      throw createError('Token invoice ID mismatch', 401);
+    }
+
+    // Load invoice
+    const invoice = await getInvoiceById(invoiceId);
+    if (!invoice) {
+      throw createError(`Invoice not found: ${invoiceId}`, 404);
+    }
+
+    // Verify email matches
+    if (invoice.subscription.userEmail.toLowerCase() !== payload.email.toLowerCase()) {
+      throw createError('Token email mismatch', 401);
+    }
+
+    // Only allow download for paid invoices
+    if (invoice.status !== 'paid') {
+      throw createError('Invoice is not paid', 400);
+    }
+
+    // Generate PDF
+    const { generateReceiptPdf } = await import('../services/receipt/receiptPdf');
+
+    const emailData: ReceiptEmailData = {
+      userEmail: invoice.subscription.userEmail,
+      receiptNumber: invoice.receiptNumber || 'N/A',
+      invoiceId: invoice.id,
+      subscriptionId: invoice.subscriptionId,
+      planCode: invoice.plan.code,
+      planName: invoice.plan.name,
+      amountUsd: invoice.amountUsd,
+      providerPaymentId: invoice.providerPaymentId,
+      orderId: invoice.subscriptionId,
+      paidAt: invoice.paidAt || invoice.updatedAt,
+      licenseKey: invoice.subscription.licenseKey,
+    };
+
+    const pdfBuffer = await generateReceiptPdf(emailData);
+
+    // Set response headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="receipt-${invoice.receiptNumber || invoice.id}.pdf"`
+    );
+    res.setHeader('Content-Length', pdfBuffer.length.toString());
+
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    if (error.statusCode) {
+      next(error);
+    } else {
+      console.error('[Receipt Download] Error:', error);
+      next(createError('Internal server error', 500));
+    }
   }
 });
 

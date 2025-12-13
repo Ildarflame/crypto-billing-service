@@ -578,7 +578,7 @@ router.patch('/subscriptions/:id', async (req: Request, res: Response, next) => 
  * - orderId (filter by invoice id - since orderId field doesn't exist in schema, we use id)
  * - limit (default 50, max 200)
  */
-router.get('/invoices', async (req: Request, res: Response, next) => {
+router.get('/invoices', async (req: Request, res: Response) => {
   try {
     const { email, status, providerPaymentId, orderId, limit: limitRaw } = req.query;
 
@@ -1022,6 +1022,65 @@ router.get('/user-overview', async (req: Request, res: Response, next) => {
       next(error);
     } else {
       console.error('[ADMIN UserOverview] Error:', error);
+      next(createError('Internal server error', 500));
+    }
+  }
+});
+
+/**
+ * POST /api/admin/invoices/:id/resend-receipt
+ * Resend receipt email for a paid invoice (admin only)
+ */
+router.post('/invoices/:id/resend-receipt', async (req: Request, res: Response, next) => {
+  try {
+    const { id } = req.params;
+
+    console.log('[ADMIN Receipt] POST /invoices/:id/resend-receipt', { id });
+
+    // Load invoice
+    const invoice = await prisma.invoice.findUnique({
+      where: { id },
+      include: {
+        plan: true,
+        subscription: true,
+      },
+    });
+
+    if (!invoice) {
+      throw createError('Invoice not found', 404);
+    }
+
+    // Verify invoice is paid
+    if (invoice.status !== 'paid') {
+      throw createError(`Invoice is not paid (status: ${invoice.status})`, 400);
+    }
+
+    // Send receipt email
+    const { sendReceiptEmail } = await import('../services/receipt/receiptService');
+    const wasSent = await sendReceiptEmail(id);
+
+    if (wasSent) {
+      console.log(`[ADMIN Receipt] Receipt email resent for invoice ${id}`);
+      res.json({
+        success: true,
+        message: 'Receipt email sent successfully',
+        invoiceId: id,
+      });
+    } else {
+      // This shouldn't happen in resend context, but handle gracefully
+      console.log(`[ADMIN Receipt] Receipt email was already sent for invoice ${id}`);
+      res.json({
+        success: true,
+        message: 'Receipt email was already sent (idempotency check)',
+        invoiceId: id,
+        alreadySent: true,
+      });
+    }
+  } catch (error: any) {
+    if (error.statusCode) {
+      next(error);
+    } else {
+      console.error('[ADMIN Receipt] Error:', error);
       next(createError('Internal server error', 500));
     }
   }

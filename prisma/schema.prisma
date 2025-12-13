@@ -54,6 +54,8 @@ model Invoice {
   providerPaymentId String?  // payment ID from the payment provider
   providerInvoiceUrl String? // invoice/payment URL from the payment provider
   status            String    // 'pending' | 'paid' | 'expired' | 'canceled'
+  receiptNumber     String?   @unique // Human-friendly receipt number (e.g. SI-2025-000123)
+  receiptSentAt     DateTime? // Timestamp when receipt email was sent (for idempotency)
   createdAt         DateTime  @default(now())
   paidAt            DateTime?
   updatedAt         DateTime  @updatedAt

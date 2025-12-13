@@ -129,6 +129,25 @@ All environment variables are defined in `src/config/env.ts`. Create a `.env` fi
 | `BILLING_ADMIN_TOKEN` | **Yes** | Token for admin endpoint authentication (alternative: `ADMIN_API_TOKEN`) | `your-admin-token-here` |
 | `ADMIN_API_TOKEN` | **Yes** | Alternative name for admin token (used if `BILLING_ADMIN_TOKEN` is not set) | `your-admin-token-here` |
 
+### Email Configuration
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `EMAIL_PROVIDER` | No | Email provider: `resend` or `smtp` | `resend` |
+| `EMAIL_FROM` | No | Sender email address | `Shadow Intern <noreply@shadowintern.xyz>` |
+| `RESEND_API_KEY` | **Yes** (if using Resend) | Resend API key | `re_xxxxxxxxxxxx` |
+| `SMTP_HOST` | **Yes** (if using SMTP) | SMTP server hostname | `smtp.gmail.com` |
+| `SMTP_PORT` | No | SMTP server port | `587` |
+| `SMTP_USER` | **Yes** (if using SMTP) | SMTP username | `noreply@shadowintern.xyz` |
+| `SMTP_PASS` | **Yes** (if using SMTP) | SMTP password | `your-smtp-password` |
+
+### Receipt Configuration
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `RECEIPT_TOKEN_SECRET` | **Yes** | Secret key for signing receipt download tokens | `your-secret-key-here` |
+| `RECEIPT_TOKEN_TTL_SECONDS` | No | Receipt token expiration time in seconds (default: 604800 = 7 days) | `604800` |
+
 ### Exchange APIs (Optional)
 
 | Variable | Required | Description | Example |
@@ -254,6 +273,32 @@ GET /api/billing/invoice/clx0987654321
   }
 }
 ```
+
+---
+
+#### `GET /api/billing/receipt/:invoiceId?token=...`
+
+Download receipt PDF (requires signed token for security).
+
+**Query Parameters:**
+- `token` (required) - Signed receipt token (provided in receipt email)
+
+**Example:**
+```
+GET /api/billing/receipt/clx0987654321?token=eyJpbnZvaWNlSWQiOiJjbH...
+```
+
+**Response (200):**
+- Content-Type: `application/pdf`
+- Content-Disposition: `attachment; filename="receipt-SI-2025-000123.pdf"`
+- Body: PDF file buffer
+
+**Error Responses:**
+- `401` - Missing or invalid token
+- `404` - Invoice not found
+- `400` - Invoice is not paid
+
+**Note:** Tokens are signed with `RECEIPT_TOKEN_SECRET` and expire after `RECEIPT_TOKEN_TTL_SECONDS` (default: 7 days).
 
 ---
 
@@ -758,6 +803,35 @@ GET /api/admin/user-overview?email=user@example.com
 
 ---
 
+#### `POST /api/admin/invoices/:id/resend-receipt`
+
+Resend receipt email for a paid invoice.
+
+**Path Parameters:**
+- `id` (required) - Invoice ID
+
+**Example:**
+```
+POST /api/admin/invoices/clx0987654321/resend-receipt
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "message": "Receipt email sent successfully",
+  "invoiceId": "clx0987654321"
+}
+```
+
+**Error Responses:**
+- `404` - Invoice not found
+- `400` - Invoice is not paid
+
+**Note:** This endpoint is idempotent. If the receipt was already sent, it will be sent again and `receiptSentAt` will be updated.
+
+---
+
 ## License Sync Behavior
 
 The service automatically synchronizes license keys with the Shadow Intern server in two scenarios:
@@ -896,6 +970,165 @@ npx prisma studio
 # Or use SQLite CLI
 sqlite3 prisma/dev.db
 ```
+
+---
+
+## Testing
+
+### Local Development Setup
+
+1. **Start the service:**
+   ```bash
+   npm run dev
+   ```
+
+2. **Run database migrations:**
+   ```bash
+   npx prisma migrate deploy
+   ```
+
+3. **Ensure environment variables are set** (see Environment Variables section above)
+
+### Testing NOWPayments Webhook
+
+The webhook handler requires HMAC-SHA512 signature verification. To test locally:
+
+1. **Create a test webhook payload** (save as `test-webhook.json`):
+   ```json
+   {
+     "payment_id": "12345678",
+     "payment_status": "finished",
+     "order_id": "clx123abc",
+     "price_amount": 39.99,
+     "price_currency": "usd",
+     "pay_amount": 0.001234,
+     "pay_currency": "BTC"
+   }
+   ```
+
+2. **Generate signature** using the script below or manually:
+   ```bash
+   node scripts/signNowpaymentsWebhook.js test-webhook.json
+   ```
+
+3. **Send webhook with curl:**
+   ```bash
+   curl -X POST http://localhost:4000/api/webhooks/nowpayments \
+     -H "Content-Type: application/json" \
+     -H "x-nowpayments-sig: <signature-from-step-2>" \
+     --data-binary @test-webhook.json
+   ```
+
+### Testing Receipt Download
+
+1. **Generate a receipt token** (requires a paid invoice):
+   ```javascript
+   // In Node.js REPL or script
+   const { createReceiptToken } = require('./dist/utils/receiptToken');
+   const token = createReceiptToken({
+     invoiceId: 'your-invoice-id',
+     email: 'user@example.com',
+     expSeconds: 604800 // 7 days
+   });
+   console.log(token);
+   ```
+
+2. **Download receipt PDF:**
+   ```bash
+   curl -X GET "http://localhost:4000/api/billing/receipt/your-invoice-id?token=YOUR_TOKEN" \
+     --output receipt.pdf
+   ```
+
+### Testing Admin Resend Receipt
+
+```bash
+curl -X POST http://localhost:4000/api/admin/invoices/your-invoice-id/resend-receipt \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -H "Content-Type: application/json"
+```
+
+### Testing License Key in Receipt Emails
+
+Receipt emails automatically include license keys when available. If a license key is missing, the system will:
+1. Generate a new license key (format: `shadow-<random hex>`)
+2. Persist it to the subscription record in the database
+3. Sync it with the Shadow Intern server via `/admin/license/upsert`
+4. Include it in the receipt email
+
+**To test license key generation:**
+
+1. **Create a paid invoice without a license key:**
+   ```bash
+   # Using Prisma Studio or direct DB access
+   # Set subscription.licenseKey to NULL for a test subscription
+   ```
+
+2. **Resend the receipt email:**
+   ```bash
+   curl -X POST http://localhost:4000/api/admin/invoices/your-invoice-id/resend-receipt \
+     -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+     -H "Content-Type: application/json"
+   ```
+
+3. **Verify the license key:**
+   - Check the receipt email - it should include the license key prominently
+   - Check the database - `subscription.licenseKey` should be populated
+   - Check logs - should show `[Receipt] Generated and persisted license key` and `[Receipt] Synced license key with Shadow Intern server`
+   - Verify Shadow Intern server has the license key via `/admin/license/:key` endpoint
+
+4. **Test idempotency:**
+   - Resend the receipt again - the same license key should be used (not regenerated)
+   - Logs should show `[Receipt] Using existing license key from database`
+
+**Note:** If Shadow Intern server is unavailable during receipt sending, the license key will still be generated and persisted to the database, but the sync will fail (logged as a warning). The receipt email will still be sent with the license key.
+
+### Helper Script: Sign NOWPayments Webhook
+
+Create `scripts/signNowpaymentsWebhook.js`:
+
+```javascript
+const crypto = require('crypto');
+const fs = require('fs');
+
+const ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET || '';
+const jsonFile = process.argv[2];
+
+if (!ipnSecret) {
+  console.error('Error: NOWPAYMENTS_IPN_SECRET environment variable is not set');
+  process.exit(1);
+}
+
+if (!jsonFile) {
+  console.error('Usage: node signNowpaymentsWebhook.js <webhook-payload.json>');
+  process.exit(1);
+}
+
+const payload = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));
+
+// Sort keys alphabetically and stringify
+const sortedKeys = Object.keys(payload).sort();
+const sortedBody = {};
+for (const key of sortedKeys) {
+  sortedBody[key] = payload[key];
+}
+const sortedBodyString = JSON.stringify(sortedBody);
+
+// Compute HMAC-SHA512
+const hmac = crypto.createHmac('sha512', ipnSecret);
+hmac.update(sortedBodyString);
+const signature = hmac.digest('hex');
+
+console.log('Signature:', signature);
+console.log('\nUse this in the x-nowpayments-sig header:');
+console.log(signature);
+```
+
+Make it executable:
+```bash
+chmod +x scripts/signNowpaymentsWebhook.js
+```
+
+---
 
 ### Typical Pitfalls
 

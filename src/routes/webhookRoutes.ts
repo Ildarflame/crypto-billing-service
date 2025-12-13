@@ -4,7 +4,6 @@ import { updateInvoice } from '../models/invoiceService';
 import { getSubscriptionById, updateSubscription, computeSubscriptionExpiration } from '../models/subscriptionService';
 import { createOrExtendLicense } from '../integrations/shadowInternClient';
 import { verifyWebhookSignature as verifyNowpaymentsWebhookSignature } from '../integrations/nowpaymentsClient';
-import { createError } from '../middlewares/errorHandler';
 import prisma from '../db/prisma';
 
 const router = Router();
@@ -132,10 +131,18 @@ router.post('/nowpayments', async (req: Request, res: Response, next) => {
 
     // Update invoice status based on payment status
     if (isSuccessful) {
+      // Generate receipt number if missing
+      let receiptNumber = invoice.receiptNumber;
+      if (!receiptNumber) {
+        const { generateReceiptNumber } = await import('../models/invoiceService');
+        receiptNumber = await generateReceiptNumber();
+      }
+
       // Update invoice to paid
       await updateInvoice(invoice.id, {
         status: 'paid',
         paidAt: new Date(),
+        receiptNumber: receiptNumber || undefined,
       });
       console.log(`[NOWPayments Webhook] Updated invoice ${invoice.id} to paid status`);
     } else if (isFinalFailure) {
@@ -194,11 +201,11 @@ router.post('/nowpayments', async (req: Request, res: Response, next) => {
     console.log(`[NOWPayments Webhook] Updated subscription ${subscription.id} to ${subscriptionStatus}`);
 
     // Increment invite code usedCount if subscription just became active
-    // @ts-ignore - inviteCodeId will be available after Prisma client generation
+    // @ts-expect-error - inviteCodeId will be available after Prisma client generation
     const inviteCodeId = (subscription as any).inviteCodeId;
     if (wasNotActive && subscriptionStatus === 'active' && inviteCodeId) {
       try {
-        // @ts-ignore - Prisma client will be generated after migration
+        // @ts-expect-error - Prisma client will be generated after migration
         await prisma.inviteCode.update({
           where: { id: inviteCodeId },
           data: { usedCount: { increment: 1 } },
@@ -233,6 +240,25 @@ router.post('/nowpayments', async (req: Request, res: Response, next) => {
         status: 'payment_received_but_license_failed',
       });
       // Still return 200 to acknowledge webhook, but log the error
+      // Note: We don't send receipt if license creation failed
+      return res.status(200).json({ status: 'ok', message: 'License creation failed' });
+    }
+
+    // Send receipt email (idempotent - checks receiptSentAt)
+    // Only send if license was successfully created
+    try {
+      const { sendReceiptEmail } = await import('../services/receipt/receiptService');
+      const wasSent = await sendReceiptEmail(invoice.id);
+      if (wasSent) {
+        console.log(`[NOWPayments Webhook] Receipt email sent for invoice ${invoice.id}`);
+      } else {
+        console.log(`[NOWPayments Webhook] Receipt email already sent for invoice ${invoice.id} (idempotency)`);
+      }
+    } catch (receiptError) {
+      // Log error but don't fail the webhook - invoice is already paid and subscription is active
+      // Admin can resend receipt via admin endpoint
+      console.error('[NOWPayments Webhook] Failed to send receipt email:', receiptError);
+      // Return 200 to acknowledge webhook - receipt can be resent later
     }
 
     res.status(200).json({ status: 'ok' });

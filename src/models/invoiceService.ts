@@ -92,11 +92,51 @@ export async function updateInvoice(
     paymentProvider?: string;
     providerPaymentId?: string;
     providerInvoiceUrl?: string;
+    receiptNumber?: string;
+    receiptSentAt?: Date;
   }
 ): Promise<Invoice> {
   return prisma.invoice.update({
     where: { id },
     data,
   });
+}
+
+/**
+ * Generates a unique receipt number in format SI-YYYY-NNNNNN
+ * Example: SI-2025-000123
+ */
+export async function generateReceiptNumber(): Promise<string> {
+  const year = new Date().getFullYear();
+  const prefix = `SI-${year}-`;
+
+  // Find the highest receipt number for this year
+  const invoices = await prisma.invoice.findMany({
+    where: {
+      receiptNumber: {
+        startsWith: prefix,
+      },
+    },
+    select: {
+      receiptNumber: true,
+    },
+    orderBy: {
+      receiptNumber: 'desc',
+    },
+    take: 1,
+  });
+
+  let nextNumber = 1;
+  if (invoices.length > 0 && invoices[0].receiptNumber) {
+    const lastNumber = invoices[0].receiptNumber.replace(prefix, '');
+    const parsed = parseInt(lastNumber, 10);
+    if (!isNaN(parsed)) {
+      nextNumber = parsed + 1;
+    }
+  }
+
+  // Format with leading zeros (6 digits)
+  const formattedNumber = String(nextNumber).padStart(6, '0');
+  return `${prefix}${formattedNumber}`;
 }
 

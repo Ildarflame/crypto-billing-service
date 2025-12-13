@@ -23,7 +23,7 @@ interface ShadowInternLicenseApiResponse {
 export async function createOrExtendLicense(
   params: CreateOrExtendLicenseParams
 ): Promise<CreateOrExtendLicenseResponse> {
-  const { userEmail, planCode, startsAt, expiresAt, maxRequestsPerDay } =
+  const { userEmail, planCode, startsAt, expiresAt, maxRequestsPerDay, licenseKey } =
     params;
 
   if (!config.shadowIntern.baseUrl || !config.shadowIntern.adminToken) {
@@ -33,6 +33,19 @@ export async function createOrExtendLicense(
   try {
     // TODO: Verify the actual Shadow Intern admin API endpoint
     // This assumes POST /admin/license/upsert or similar
+    const requestBody: any = {
+      userEmail,
+      planCode,
+      startsAt: startsAt.toISOString(),
+      expiresAt: expiresAt ? expiresAt.toISOString() : null,
+      maxRequestsPerDay,
+    };
+    
+    // Include licenseKey if provided
+    if (licenseKey) {
+      requestBody.licenseKey = licenseKey;
+    }
+    
     const response = await fetch(
       `${config.shadowIntern.baseUrl}/admin/license/upsert`,
       {
@@ -42,13 +55,7 @@ export async function createOrExtendLicense(
           'Authorization': `Bearer ${config.shadowIntern.adminToken}`,
           // TODO: Adjust header format if Shadow Intern uses different auth
         },
-        body: JSON.stringify({
-          userEmail,
-          planCode,
-          startsAt: startsAt.toISOString(),
-          expiresAt: expiresAt ? expiresAt.toISOString() : null,
-          maxRequestsPerDay,
-        }),
+        body: JSON.stringify(requestBody),
       }
     );
 

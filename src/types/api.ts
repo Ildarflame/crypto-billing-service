@@ -91,6 +91,7 @@ export interface CreateOrExtendLicenseParams {
   startsAt: Date;
   expiresAt: Date | null;
   maxRequestsPerDay: number | null;
+  licenseKey?: string; // Optional: if provided, use this key instead of generating one
 }
 
 export interface CreateOrExtendLicenseResponse {
