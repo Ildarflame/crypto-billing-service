@@ -10,35 +10,27 @@ async function main() {
   const plans = [
     {
       code: 'starter_monthly',
-      name: 'Starter Monthly',
+      name: 'Starter',
       description: 'Basic plan for individual users',
-      priceUsd: 19.99,
+      priceUsd: 10.99,
       durationDays: 30,
-      maxRequestsPerDay: 1000,
+      maxRequestsPerDay: 50,
     },
     {
       code: 'pro_monthly',
-      name: 'Pro Monthly',
+      name: 'Pro',
       description: 'Professional plan with higher limits',
+      priceUsd: 19.99,
+      durationDays: 30,
+      maxRequestsPerDay: 125,
+    },
+    {
+      code: 'max_monthly',
+      name: 'Max',
+      description: 'Maximum plan with highest limits',
       priceUsd: 39.99,
       durationDays: 30,
-      maxRequestsPerDay: 5000,
-    },
-    {
-      code: 'pro_yearly',
-      name: 'Pro Yearly',
-      description: 'Professional plan - annual subscription',
-      priceUsd: 399.99,
-      durationDays: 365,
-      maxRequestsPerDay: 5000,
-    },
-    {
-      code: 'lifetime',
-      name: 'Lifetime',
-      description: 'One-time payment for lifetime access',
-      priceUsd: 999.99,
-      durationDays: null, // null = lifetime
-      maxRequestsPerDay: null, // null = unlimited
+      maxRequestsPerDay: 250,
     },
   ];
 

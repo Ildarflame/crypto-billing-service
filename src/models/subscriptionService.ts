@@ -19,7 +19,7 @@ export interface ComputedExpiration {
 /**
  * Computes new startsAt and expiresAt for a subscription based on payment.
  * Rules:
- * - First payment: startsAt = now, expiresAt = now + durationDays (or null for lifetime)
+ * - First payment: startsAt = now, expiresAt = now + durationDays
  * - Renewal (active subscription):
  *   - If expiresAt > now: expiresAt = expiresAt + durationDays
  *   - Else: expiresAt = now + durationDays

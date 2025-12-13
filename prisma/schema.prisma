@@ -12,11 +12,11 @@ datasource db {
 
 model Plan {
   id                String         @id @default(cuid())
-  code              String         @unique // e.g. 'starter_monthly', 'pro_monthly', 'lifetime'
+  code              String         @unique // e.g. 'starter_monthly', 'pro_monthly', 'max_monthly'
   name              String         // human readable name
   description       String?
   priceUsd          Float          // price per billing period (in USD equivalent)
-  durationDays      Int?           // 30, 365, or null for lifetime
+  durationDays      Int?           // 30 for monthly plans
   maxRequestsPerDay Int?           // daily rate limit (null = unlimited or not enforced)
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
