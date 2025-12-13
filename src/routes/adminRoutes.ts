@@ -318,15 +318,15 @@ router.patch('/invite-codes/:id', async (req: Request, res: Response, next) => {
  * - email (filter by userEmail, case-insensitive contains or exact match)
  * - status (filter by subscription status)
  * - planCode (filter by plan code)
+ * - inviteCode (filter by invite code string)
  * - limit (default 50, max 200)
  */
 router.get('/subscriptions', async (req: Request, res: Response, next) => {
   try {
-    const email = req.query.email as string | undefined;
-    const status = req.query.status as string | undefined;
-    const planCode = req.query.planCode as string | undefined;
+    const { email, status, planCode, limit: limitRaw, inviteCode } = req.query;
+
     const limit = Math.min(
-      parseInt(req.query.limit as string) || 50,
+      parseInt(limitRaw as string) || 50,
       200
     );
 
@@ -334,12 +334,13 @@ router.get('/subscriptions', async (req: Request, res: Response, next) => {
       email: email ? '***' : undefined,
       status,
       planCode,
+      inviteCode,
       limit,
     });
 
     const where: any = {};
 
-    if (email) {
+    if (email && typeof email === 'string') {
       const emailSearch = email.trim();
       // SQLite: use contains filter for email search
       where.userEmail = {
@@ -347,13 +348,19 @@ router.get('/subscriptions', async (req: Request, res: Response, next) => {
       };
     }
 
-    if (status) {
+    if (status && typeof status === 'string') {
       where.status = status;
     }
 
-    if (planCode) {
+    if (planCode && typeof planCode === 'string') {
       where.plan = {
         code: planCode.trim(),
+      };
+    }
+
+    if (inviteCode && typeof inviteCode === 'string') {
+      where.inviteCode = {
+        code: inviteCode.trim(),
       };
     }
 
@@ -388,6 +395,105 @@ router.get('/subscriptions', async (req: Request, res: Response, next) => {
   } catch (error: any) {
     console.error('[ADMIN Subscriptions] GET /subscriptions Error:', error);
     next(createError('Internal server error', 500));
+  }
+});
+
+/**
+ * GET /api/admin/invoices
+ * Get list of invoices (admin only)
+ * Query params:
+ * - email (filter by subscription.userEmail)
+ * - status (filter by invoice.status)
+ * - providerPaymentId (filter by providerPaymentId)
+ * - orderId (filter by invoice id - since orderId field doesn't exist in schema, we use id)
+ * - limit (default 50, max 200)
+ */
+router.get('/invoices', async (req: Request, res: Response, next) => {
+  try {
+    const { email, status, providerPaymentId, orderId, limit: limitRaw } = req.query;
+
+    const limit = Math.min(
+      parseInt(limitRaw as string) || 50,
+      200
+    );
+
+    console.log('[ADMIN Invoices] GET /invoices', {
+      email: email ? '***' : undefined,
+      status,
+      providerPaymentId,
+      orderId,
+      limit,
+    });
+
+    const where: any = {};
+
+    if (status && typeof status === 'string') {
+      where.status = status;
+    }
+
+    if (providerPaymentId && typeof providerPaymentId === 'string') {
+      where.providerPaymentId = providerPaymentId;
+    }
+
+    if (orderId && typeof orderId === 'string') {
+      // Note: Invoice schema doesn't have orderId field, so we filter by id instead
+      where.id = orderId;
+    }
+
+    if (email && typeof email === 'string') {
+      where.subscription = {
+        userEmail: {
+          contains: email.trim(),
+        },
+      };
+    }
+
+    const invoices = await prisma.invoice.findMany({
+      where,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        subscription: {
+          include: {
+            plan: true,
+            inviteCode: true,
+          },
+        },
+      },
+    });
+
+    const result = invoices.map((inv) => ({
+      id: inv.id,
+      status: inv.status,
+      priceAmount: inv.amountUsd,
+      priceCurrency: 'USD',
+      createdAt: inv.createdAt,
+      providerPaymentId: inv.providerPaymentId,
+      orderId: inv.id, // Using invoice id as orderId since orderId field doesn't exist in schema
+      // subscription summary
+      subscription: inv.subscription
+        ? {
+            id: inv.subscription.id,
+            userEmail: inv.subscription.userEmail,
+            planCode: inv.subscription.plan?.code ?? null,
+            status: inv.subscription.status,
+            licenseKey: inv.subscription.licenseKey,
+            inviteCode: inv.subscription.inviteCode
+              ? {
+                  id: inv.subscription.inviteCode.id,
+                  code: inv.subscription.inviteCode.code,
+                  type: inv.subscription.inviteCode.type,
+                  ownerEmail: inv.subscription.inviteCode.ownerEmail,
+                }
+              : null,
+          }
+        : null,
+    }));
+
+    return res.json({ invoices: result });
+  } catch (error: any) {
+    console.error('[ADMIN Invoices] Error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
