@@ -93,6 +93,7 @@ model InviteCode {
   expiresAt   DateTime?
   ownerEmail  String?
   notes       String?
+  revenueSharePercent Int? @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

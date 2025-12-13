@@ -86,6 +86,7 @@ router.get('/invite-codes', async (req: Request, res: Response, next) => {
         remaining,
         ownerEmail: inviteCode.ownerEmail,
         notes: inviteCode.notes,
+        revenueSharePercent: inviteCode.revenueSharePercent ?? 0,
         createdAt: inviteCode.createdAt.toISOString(),
         expiresAt: inviteCode.expiresAt?.toISOString() || null,
       });
@@ -111,6 +112,7 @@ router.get('/invite-codes', async (req: Request, res: Response, next) => {
           remaining,
           ownerEmail: ic.ownerEmail,
           notes: ic.notes,
+          revenueSharePercent: ic.revenueSharePercent ?? 0,
           createdAt: ic.createdAt.toISOString(),
           expiresAt: ic.expiresAt?.toISOString() || null,
         };
@@ -132,13 +134,14 @@ router.get('/invite-codes', async (req: Request, res: Response, next) => {
  */
 router.post('/invite-codes', async (req: Request, res: Response, next) => {
   try {
-    const { code, type, maxUses, expiresAt, ownerEmail, notes } = req.body;
+    const { code, type, maxUses, expiresAt, ownerEmail, notes, revenueSharePercent } = req.body;
 
     console.log('[ADMIN Invite] POST /invite-codes', {
       code: code ? '***' : undefined,
       type,
       maxUses,
       ownerEmail: ownerEmail ? '***' : undefined,
+      revenueSharePercent,
     });
 
     if (!code || typeof code !== 'string') {
@@ -185,6 +188,17 @@ router.post('/invite-codes', async (req: Request, res: Response, next) => {
       }
     }
 
+    // Validate revenueSharePercent if provided
+    let revenueSharePercentInt: number | null = null;
+    if (revenueSharePercent !== undefined && revenueSharePercent !== null) {
+      revenueSharePercentInt = parseInt(String(revenueSharePercent), 10);
+      if (isNaN(revenueSharePercentInt) || revenueSharePercentInt < 0 || revenueSharePercentInt > 100) {
+        throw createError('revenueSharePercent must be a number between 0 and 100', 400);
+      }
+    } else {
+      revenueSharePercentInt = 0; // Default to 0 if not provided
+    }
+
     const inviteCode = await prisma.inviteCode.create({
       data: {
         code: normalizedCode,
@@ -194,6 +208,7 @@ router.post('/invite-codes', async (req: Request, res: Response, next) => {
         expiresAt: expiresAtDate,
         ownerEmail: ownerEmail || null,
         notes: notes || null,
+        revenueSharePercent: revenueSharePercentInt,
       },
     });
 
@@ -212,6 +227,7 @@ router.post('/invite-codes', async (req: Request, res: Response, next) => {
       remaining,
       ownerEmail: inviteCode.ownerEmail,
       notes: inviteCode.notes,
+      revenueSharePercent: inviteCode.revenueSharePercent ?? 0,
       createdAt: inviteCode.createdAt.toISOString(),
       expiresAt: inviteCode.expiresAt?.toISOString() || null,
     });
@@ -232,13 +248,14 @@ router.post('/invite-codes', async (req: Request, res: Response, next) => {
 router.patch('/invite-codes/:id', async (req: Request, res: Response, next) => {
   try {
     const { id } = req.params;
-    const { status, maxUses, notes } = req.body;
+    const { status, maxUses, notes, revenueSharePercent } = req.body;
 
     console.log('[ADMIN Invite] PATCH /invite-codes/:id', {
       id,
       status,
       maxUses,
       hasNotes: !!notes,
+      revenueSharePercent,
     });
 
     // Check if invite code exists
@@ -280,6 +297,14 @@ router.patch('/invite-codes/:id', async (req: Request, res: Response, next) => {
       updateData.notes = notes || null;
     }
 
+    if (revenueSharePercent !== undefined && revenueSharePercent !== null) {
+      const revenueSharePercentInt = parseInt(String(revenueSharePercent), 10);
+      if (isNaN(revenueSharePercentInt) || revenueSharePercentInt < 0 || revenueSharePercentInt > 100) {
+        throw createError('revenueSharePercent must be a number between 0 and 100', 400);
+      }
+      updateData.revenueSharePercent = revenueSharePercentInt;
+    }
+
     const updated = await prisma.inviteCode.update({
       where: { id },
       data: updateData,
@@ -298,6 +323,7 @@ router.patch('/invite-codes/:id', async (req: Request, res: Response, next) => {
       remaining,
       ownerEmail: updated.ownerEmail,
       notes: updated.notes,
+      revenueSharePercent: updated.revenueSharePercent ?? 0,
       createdAt: updated.createdAt.toISOString(),
       expiresAt: updated.expiresAt?.toISOString() || null,
     });
@@ -388,6 +414,9 @@ router.get('/subscriptions', async (req: Request, res: Response, next) => {
           ? {
               id: sub.inviteCode.id,
               code: sub.inviteCode.code,
+              type: sub.inviteCode.type,
+              ownerEmail: sub.inviteCode.ownerEmail,
+              revenueSharePercent: sub.inviteCode.revenueSharePercent ?? 0,
             }
           : null,
       })),
@@ -395,6 +424,130 @@ router.get('/subscriptions', async (req: Request, res: Response, next) => {
   } catch (error: any) {
     console.error('[ADMIN Subscriptions] GET /subscriptions Error:', error);
     next(createError('Internal server error', 500));
+  }
+});
+
+/**
+ * PATCH /api/admin/subscriptions/:id
+ * Update a subscription (admin only)
+ * Request body:
+ * - status?: string (optional: new status)
+ * - expiresAt?: string (optional ISO date string to set exact expiry)
+ * - addDays?: number (optional: number of days to extend from current expiresAt or now)
+ * - inviteCode?: string (optional: invite code string to link subscription to)
+ */
+router.patch('/subscriptions/:id', async (req: Request, res: Response, next) => {
+  try {
+    const { id } = req.params;
+    const { status, expiresAt, addDays, inviteCode } = req.body;
+
+    console.log('[ADMIN Subscriptions] PATCH /subscriptions/:id', {
+      id,
+      status,
+      expiresAt,
+      addDays,
+      inviteCode: inviteCode ? '***' : undefined,
+    });
+
+    // Validate that at least one field is provided
+    if (
+      status === undefined &&
+      expiresAt === undefined &&
+      addDays === undefined &&
+      inviteCode === undefined
+    ) {
+      throw createError('At least one field (status, expiresAt, addDays, inviteCode) must be provided', 400);
+    }
+
+    // Fetch current subscription
+    const existing = await prisma.subscription.findUnique({
+      where: { id },
+      include: { inviteCode: true },
+    });
+
+    if (!existing) {
+      throw createError('Subscription not found', 404);
+    }
+
+    // Build update data object
+    const data: any = {};
+
+    if (status !== undefined && typeof status === 'string') {
+      data.status = status;
+    }
+
+    if (typeof addDays === 'number' && addDays !== 0) {
+      // Extend expiresAt
+      const baseDate = existing.expiresAt ?? new Date();
+      const newDate = new Date(baseDate);
+      newDate.setDate(newDate.getDate() + addDays);
+      data.expiresAt = newDate;
+    } else if (expiresAt !== undefined && typeof expiresAt === 'string') {
+      const newDate = new Date(expiresAt);
+      if (!isNaN(newDate.getTime())) {
+        data.expiresAt = newDate;
+      } else {
+        throw createError('Invalid expiresAt date format', 400);
+      }
+    }
+
+    if (inviteCode !== undefined) {
+      if (inviteCode === null || (typeof inviteCode === 'string' && inviteCode.trim().length === 0)) {
+        // Allow clearing the invite code
+        data.inviteCodeId = null;
+      } else if (typeof inviteCode === 'string') {
+        const codeValue = inviteCode.trim();
+        if (codeValue.length > 0) {
+          const code = await prisma.inviteCode.findUnique({
+            where: { code: codeValue },
+          });
+          if (!code) {
+            throw createError('Invite code not found', 400);
+          }
+          data.inviteCodeId = code.id;
+        }
+      }
+    }
+
+    // Apply update
+    const updated = await prisma.subscription.update({
+      where: { id },
+      data,
+      include: {
+        plan: true,
+        inviteCode: true,
+      },
+    });
+
+    // Return normalized response
+    return res.json({
+      subscription: {
+        id: updated.id,
+        userEmail: updated.userEmail,
+        status: updated.status,
+        planCode: updated.plan?.code ?? null,
+        licenseKey: updated.licenseKey,
+        expiresAt: updated.expiresAt,
+        inviteCode: updated.inviteCode
+          ? {
+              id: updated.inviteCode.id,
+              code: updated.inviteCode.code,
+              type: updated.inviteCode.type,
+              ownerEmail: updated.inviteCode.ownerEmail,
+              revenueSharePercent: updated.inviteCode.revenueSharePercent ?? 0,
+            }
+          : null,
+        createdAt: updated.createdAt,
+        updatedAt: updated.updatedAt,
+      },
+    });
+  } catch (error: any) {
+    if (error.statusCode) {
+      next(error);
+    } else {
+      console.error('[ADMIN Subscriptions PATCH] Error:', error);
+      next(createError('Internal server error', 500));
+    }
   }
 });
 
@@ -484,6 +637,7 @@ router.get('/invoices', async (req: Request, res: Response, next) => {
                   code: inv.subscription.inviteCode.code,
                   type: inv.subscription.inviteCode.type,
                   ownerEmail: inv.subscription.inviteCode.ownerEmail,
+                  revenueSharePercent: inv.subscription.inviteCode.revenueSharePercent ?? 0,
                 }
               : null,
           }
