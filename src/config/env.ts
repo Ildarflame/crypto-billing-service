@@ -17,7 +17,7 @@ export const config = {
     baseUrl: process.env.SHADOW_INTERN_BASE_URL || '',
     adminToken: process.env.SHADOW_INTERN_ADMIN_TOKEN || '',
   },
-  adminApiToken: process.env.ADMIN_API_TOKEN || '',
+  adminApiToken: process.env.BILLING_ADMIN_TOKEN || process.env.ADMIN_API_TOKEN || '',
   binance: {
     baseUrl: process.env.BINANCE_BASE_URL || 'https://api.binance.com',
   },
