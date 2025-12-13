@@ -5,8 +5,20 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Seeding database...');
 
-  // Seed Plans
-  console.log('📦 Creating plans...');
+  // Remove deprecated plans
+  console.log('🗑️  Removing deprecated plans...');
+  const deprecatedPlanCodes = ['lifetime', 'pro_yearly'];
+  for (const code of deprecatedPlanCodes) {
+    const deleted = await prisma.plan.deleteMany({
+      where: { code },
+    });
+    if (deleted.count > 0) {
+      console.log(`  ✓ Removed plan: ${code}`);
+    }
+  }
+
+  // Seed Plans - UPSERT by code to ensure exact match
+  console.log('📦 Creating/updating plans...');
   const plans = [
     {
       code: 'starter_monthly',
@@ -40,7 +52,7 @@ async function main() {
       update: plan,
       create: plan,
     });
-    console.log(`  ✓ Created/updated plan: ${plan.code}`);
+    console.log(`  ✓ Created/updated plan: ${plan.code} ($${plan.priceUsd})`);
   }
 
   // Seed Payment Methods
