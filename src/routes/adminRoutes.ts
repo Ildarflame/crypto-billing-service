@@ -391,4 +391,286 @@ router.get('/subscriptions', async (req: Request, res: Response, next) => {
   }
 });
 
+/**
+ * GET /api/admin/stats
+ * Get high-level stats for admin dashboard (admin only)
+ */
+router.get('/stats', async (req: Request, res: Response, next) => {
+  try {
+    console.log('[ADMIN Stats] GET /stats');
+
+    // Run subscription counts in parallel
+    const [totalSubscriptions, activeSubscriptions, expiredSubscriptions] = await Promise.all([
+      prisma.subscription.count(),
+      prisma.subscription.count({ where: { status: 'active' } }),
+      prisma.subscription.count({ where: { status: 'expired' } }),
+    ]);
+
+    // Revenue calculations
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const [paidInvoices, allPaidInvoices] = await Promise.all([
+      prisma.invoice.findMany({
+        where: {
+          status: 'paid',
+          createdAt: { gte: thirtyDaysAgo },
+        },
+        select: { amountUsd: true },
+      }),
+      prisma.invoice.findMany({
+        where: { status: 'paid' },
+        select: { amountUsd: true },
+      }),
+    ]);
+
+    const totalPaidInvoices = allPaidInvoices.length;
+    const totalRevenueUsd = allPaidInvoices.reduce((sum, inv) => sum + inv.amountUsd, 0);
+    const revenueLast30DaysUsd = paidInvoices.reduce((sum, inv) => sum + inv.amountUsd, 0);
+
+    // Breakdown by plan
+    const plans = await prisma.plan.findMany({
+      include: {
+        subscriptions: {
+          select: { id: true, status: true },
+        },
+        invoices: {
+          where: { status: 'paid' },
+          select: { amountUsd: true },
+        },
+      },
+    });
+
+    const plansBreakdown = plans
+      .filter((plan) => plan.subscriptions.length > 0 || plan.invoices.length > 0)
+      .map((plan) => {
+        const activeSubs = plan.subscriptions.filter((s) => s.status === 'active').length;
+        const revenueUsd = plan.invoices.reduce((sum, inv) => sum + inv.amountUsd, 0);
+        return {
+          planCode: plan.code,
+          name: plan.name,
+          priceUsd: plan.priceUsd,
+          totalSubscriptions: plan.subscriptions.length,
+          activeSubscriptions: activeSubs,
+          revenueUsd,
+        };
+      });
+
+    // Breakdown by invite code
+    const inviteCodes = await prisma.inviteCode.findMany({
+      include: {
+        subscriptions: {
+          select: { id: true, status: true },
+          include: {
+            invoices: {
+              where: { status: 'paid' },
+              select: { amountUsd: true },
+            },
+          },
+        },
+      },
+    });
+
+    const inviteCodesBreakdown = inviteCodes.map((ic) => {
+      const activeSubs = ic.subscriptions.filter((s) => s.status === 'active').length;
+      const revenueUsd = ic.subscriptions.reduce(
+        (sum, sub) => sum + sub.invoices.reduce((invSum, inv) => invSum + inv.amountUsd, 0),
+        0
+      );
+      return {
+        id: ic.id,
+        code: ic.code,
+        type: ic.type,
+        status: ic.status,
+        maxUses: ic.maxUses,
+        usedCount: ic.usedCount,
+        subscriptionsCount: ic.subscriptions.length,
+        activeSubscriptionsCount: activeSubs,
+        revenueUsd,
+        ownerEmail: ic.ownerEmail,
+        createdAt: ic.createdAt.toISOString(),
+        expiresAt: ic.expiresAt?.toISOString() || null,
+      };
+    });
+
+    res.json({
+      subscriptions: {
+        total: totalSubscriptions,
+        active: activeSubscriptions,
+        expired: expiredSubscriptions,
+      },
+      revenue: {
+        totalPaidInvoices: totalPaidInvoices,
+        totalRevenueUsd: totalRevenueUsd,
+        revenueLast30DaysUsd: revenueLast30DaysUsd,
+      },
+      plans: plansBreakdown,
+      inviteCodes: inviteCodesBreakdown,
+    });
+  } catch (error: any) {
+    console.error('[ADMIN Stats] Error:', error);
+    next(createError('Internal server error', 500));
+  }
+});
+
+/**
+ * GET /api/admin/user-overview
+ * Get comprehensive overview for a single user by email (admin only)
+ * Query params:
+ * - email (required)
+ */
+router.get('/user-overview', async (req: Request, res: Response, next) => {
+  try {
+    const email = req.query.email as string | undefined;
+
+    console.log('[ADMIN UserOverview] GET /user-overview', {
+      email: email ? '***' : undefined,
+    });
+
+    if (!email || typeof email !== 'string') {
+      throw createError('Invalid email', 400);
+    }
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      throw createError('Invalid email', 400);
+    }
+
+    const userEmail = email.trim();
+
+    // Fetch all subscriptions for this user
+    const subscriptions = await prisma.subscription.findMany({
+      where: { userEmail },
+      include: {
+        plan: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            priceUsd: true,
+          },
+        },
+        inviteCode: {
+          select: {
+            id: true,
+            code: true,
+            type: true,
+            status: true,
+            ownerEmail: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const subscriptionIds = subscriptions.map((s) => s.id);
+
+    // Fetch all invoices for these subscriptions
+    const invoices = await prisma.invoice.findMany({
+      where: { subscriptionId: { in: subscriptionIds } },
+      select: {
+        id: true,
+        status: true,
+        amountUsd: true,
+        createdAt: true,
+        paidAt: true,
+        planId: true,
+        subscriptionId: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Calculate metrics
+    const totalSubscriptions = subscriptions.length;
+    const activeSubscriptions = subscriptions.filter((s) => s.status === 'active').length;
+    const paidInvoices = invoices.filter((inv) => inv.status === 'paid');
+    const totalPaidInvoices = paidInvoices.length;
+    const totalRevenueUsd = paidInvoices.reduce((sum, inv) => sum + inv.amountUsd, 0);
+
+    // Aggregate plans used
+    const plansUsedMap = new Map<string, number>();
+    subscriptions.forEach((sub) => {
+      const planCode = sub.plan.code;
+      plansUsedMap.set(planCode, (plansUsedMap.get(planCode) || 0) + 1);
+    });
+    const plansUsed = Array.from(plansUsedMap.entries()).map(([planCode, count]) => ({
+      planCode,
+      count,
+    }));
+
+    // Collect unique invite codes
+    const inviteCodesMap = new Map<string, {
+      id: string;
+      code: string;
+      type: string;
+      status: string;
+      ownerEmail: string | null;
+    }>();
+    subscriptions.forEach((sub) => {
+      if (sub.inviteCode) {
+        if (!inviteCodesMap.has(sub.inviteCode.id)) {
+          inviteCodesMap.set(sub.inviteCode.id, {
+            id: sub.inviteCode.id,
+            code: sub.inviteCode.code,
+            type: sub.inviteCode.type,
+            status: sub.inviteCode.status,
+            ownerEmail: sub.inviteCode.ownerEmail,
+          });
+        }
+      }
+    });
+
+    // Format subscriptions for response (select only useful fields)
+    const formattedSubscriptions = subscriptions.map((sub) => ({
+      id: sub.id,
+      planCode: sub.plan.code,
+      planName: sub.plan.name,
+      status: sub.status,
+      licenseKey: sub.licenseKey,
+      startsAt: sub.startsAt?.toISOString() || null,
+      expiresAt: sub.expiresAt?.toISOString() || null,
+      createdAt: sub.createdAt.toISOString(),
+      inviteCodeId: sub.inviteCodeId,
+      inviteCode: sub.inviteCode
+        ? {
+            id: sub.inviteCode.id,
+            code: sub.inviteCode.code,
+          }
+        : null,
+    }));
+
+    // Format invoices for response
+    const formattedInvoices = invoices.map((inv) => ({
+      id: inv.id,
+      status: inv.status,
+      amountUsd: inv.amountUsd,
+      createdAt: inv.createdAt.toISOString(),
+      paidAt: inv.paidAt?.toISOString() || null,
+      subscriptionId: inv.subscriptionId,
+    }));
+
+    res.json({
+      userEmail,
+      metrics: {
+        totalSubscriptions,
+        activeSubscriptions,
+        totalPaidInvoices,
+        totalRevenueUsd,
+        plansUsed,
+      },
+      subscriptions: formattedSubscriptions,
+      invoices: formattedInvoices,
+      inviteCodes: Array.from(inviteCodesMap.values()),
+    });
+  } catch (error: any) {
+    if (error.statusCode) {
+      next(error);
+    } else {
+      console.error('[ADMIN UserOverview] Error:', error);
+      next(createError('Internal server error', 500));
+    }
+  }
+});
+
 export default router;
