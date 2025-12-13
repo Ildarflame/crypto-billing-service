@@ -429,54 +429,131 @@ router.get('/stats', async (req: Request, res: Response, next) => {
     const revenueLast30DaysUsd = paidInvoices.reduce((sum, inv) => sum + inv.amountUsd, 0);
 
     // Breakdown by plan
-    const plans = await prisma.plan.findMany({
-      include: {
-        subscriptions: {
-          select: { id: true, status: true },
+    const [allPlans, subscriptionsByPlan, invoicesByPlan] = await Promise.all([
+      prisma.plan.findMany({
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          priceUsd: true,
         },
-        invoices: {
-          where: { status: 'paid' },
-          select: { amountUsd: true },
-        },
-      },
+      }),
+      prisma.subscription.groupBy({
+        by: ['planId', 'status'],
+        _count: { _all: true },
+      }),
+      prisma.invoice.groupBy({
+        by: ['planId'],
+        where: { status: 'paid' },
+        _sum: { amountUsd: true },
+      }),
+    ]);
+
+    const subscriptionsByPlanMap = new Map<string, { total: number; active: number }>();
+    subscriptionsByPlan.forEach((item) => {
+      const existing = subscriptionsByPlanMap.get(item.planId) || { total: 0, active: 0 };
+      existing.total += item._count._all;
+      if (item.status === 'active') {
+        existing.active += item._count._all;
+      }
+      subscriptionsByPlanMap.set(item.planId, existing);
     });
 
-    const plansBreakdown = plans
-      .filter((plan) => plan.subscriptions.length > 0 || plan.invoices.length > 0)
+    const revenueByPlanMap = new Map<string, number>();
+    invoicesByPlan.forEach((item) => {
+      revenueByPlanMap.set(item.planId, item._sum.amountUsd || 0);
+    });
+
+    const plansBreakdown = allPlans
       .map((plan) => {
-        const activeSubs = plan.subscriptions.filter((s) => s.status === 'active').length;
-        const revenueUsd = plan.invoices.reduce((sum, inv) => sum + inv.amountUsd, 0);
+        const subs = subscriptionsByPlanMap.get(plan.id) || { total: 0, active: 0 };
+        const revenueUsd = revenueByPlanMap.get(plan.id) || 0;
         return {
           planCode: plan.code,
           name: plan.name,
           priceUsd: plan.priceUsd,
-          totalSubscriptions: plan.subscriptions.length,
-          activeSubscriptions: activeSubs,
+          totalSubscriptions: subs.total,
+          activeSubscriptions: subs.active,
           revenueUsd,
         };
-      });
+      })
+      .filter((plan) => plan.totalSubscriptions > 0 || plan.revenueUsd > 0);
 
     // Breakdown by invite code
-    const inviteCodes = await prisma.inviteCode.findMany({
-      include: {
-        subscriptions: {
-          select: { id: true, status: true },
-          include: {
-            invoices: {
-              where: { status: 'paid' },
-              select: { amountUsd: true },
-            },
-          },
+    const [inviteCodes, subscriptionsByInvite, revenueByInvite] = await Promise.all([
+      prisma.inviteCode.findMany({
+        select: {
+          id: true,
+          code: true,
+          type: true,
+          status: true,
+          maxUses: true,
+          usedCount: true,
+          ownerEmail: true,
+          createdAt: true,
+          expiresAt: true,
         },
+      }),
+      prisma.subscription.groupBy({
+        by: ['inviteCodeId', 'status'],
+        _count: { _all: true },
+        where: {
+          inviteCodeId: { not: null },
+        },
+      }),
+      prisma.invoice.groupBy({
+        by: ['subscriptionId'],
+        where: {
+          status: 'paid',
+        },
+        _sum: { amountUsd: true },
+      }),
+    ]);
+
+    // Get subscription IDs to inviteCodeId mapping
+    const subscriptionsWithInvite = await prisma.subscription.findMany({
+      where: {
+        inviteCodeId: { not: null },
+      },
+      select: {
+        id: true,
+        inviteCodeId: true,
       },
     });
 
+    const subscriptionToInviteMap = new Map<string, string>();
+    subscriptionsWithInvite.forEach((sub) => {
+      if (sub.inviteCodeId) {
+        subscriptionToInviteMap.set(sub.id, sub.inviteCodeId);
+      }
+    });
+
+    // Aggregate revenue by invite code
+    const revenueByInviteMap = new Map<string, number>();
+    revenueByInvite.forEach((item) => {
+      const inviteCodeId = subscriptionToInviteMap.get(item.subscriptionId);
+      if (inviteCodeId) {
+        const current = revenueByInviteMap.get(inviteCodeId) || 0;
+        revenueByInviteMap.set(inviteCodeId, current + (item._sum.amountUsd || 0));
+      }
+    });
+
+    // Aggregate subscriptions by invite code
+    const subscriptionsByInviteMap = new Map<string, { total: number; active: number }>();
+    subscriptionsByInvite.forEach((item) => {
+      if (item.inviteCodeId) {
+        const existing = subscriptionsByInviteMap.get(item.inviteCodeId) || { total: 0, active: 0 };
+        existing.total += item._count._all;
+        if (item.status === 'active') {
+          existing.active += item._count._all;
+        }
+        subscriptionsByInviteMap.set(item.inviteCodeId, existing);
+      }
+    });
+
     const inviteCodesBreakdown = inviteCodes.map((ic) => {
-      const activeSubs = ic.subscriptions.filter((s) => s.status === 'active').length;
-      const revenueUsd = ic.subscriptions.reduce(
-        (sum, sub) => sum + sub.invoices.reduce((invSum, inv) => invSum + inv.amountUsd, 0),
-        0
-      );
+      const subs = subscriptionsByInviteMap.get(ic.id) || { total: 0, active: 0 };
+      const revenueUsd = revenueByInviteMap.get(ic.id) || 0;
       return {
         id: ic.id,
         code: ic.code,
@@ -484,12 +561,12 @@ router.get('/stats', async (req: Request, res: Response, next) => {
         status: ic.status,
         maxUses: ic.maxUses,
         usedCount: ic.usedCount,
-        subscriptionsCount: ic.subscriptions.length,
-        activeSubscriptionsCount: activeSubs,
+        subscriptionsCount: subs.total,
+        activeSubscriptionsCount: subs.active,
         revenueUsd,
         ownerEmail: ic.ownerEmail,
-        createdAt: ic.createdAt.toISOString(),
-        expiresAt: ic.expiresAt?.toISOString() || null,
+        createdAt: ic.createdAt,
+        expiresAt: ic.expiresAt,
       };
     });
 
